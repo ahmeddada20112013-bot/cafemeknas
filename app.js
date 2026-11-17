@@ -1303,6 +1303,7 @@ $('#sbDisconnectBtn').addEventListener('click', () => {
 });
 
 (async function init() {
+  $('#appVersion').textContent = 'النسخة ' + APP_VERSION;
   if (SupabaseBackend.detect()) { MODE = 'supabase'; backend = SupabaseBackend; }
   else if (await NodeBackend.detect()) { MODE = 'server'; backend = NodeBackend; }
   document.body.classList.add('mode-' + MODE);

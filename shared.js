@@ -26,6 +26,8 @@ const MENU = [
   ['كوفر نتيلا', WAFFLE, 20], ['كوفر لوتوس', WAFFLE, 20], ['كوفر ميلكا', WAFFLE, 20], ['كوفر سبيسيال', WAFFLE, 25],
 ];
 const MENU_VERSION = 2;
+// رقم نسخة التطبيق (يظهر أسفل صفحة الدخول) — للتأكد أن الصفحة المنشورة محدّثة
+const APP_VERSION = '8 — قائمة Cafe Shop Meknes';
 function menuProducts() { return MENU.map(([name, category, price]) => ({ id: uid(), name, category, price })); }
 // أسماء القائمة التجريبية القديمة: إن لم يعدّلها صاحب المقهى، تُستبدل بالقائمة الحقيقية
 const OLD_DEMO_MENU = ['قهوة سوداء', 'قهوة نص نص', 'كابتشينو', 'أتاي بالنعناع', 'شوكولا ساخنة', 'عصير برتقال', 'عصير أفوكادو', 'بانشي',
@@ -112,5 +114,5 @@ function applyPatch(st, p) {
 }
 const clone = v => v === undefined ? v : JSON.parse(JSON.stringify(v));
 
-return { uid, ps4Stations, DEFAULT_STATE, migrate, upgradeMenu, menuProducts, diffState, applyPatch, clone };
+return { APP_VERSION, uid, ps4Stations, DEFAULT_STATE, migrate, upgradeMenu, menuProducts, diffState, applyPatch, clone };
 });
