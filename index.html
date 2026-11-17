@@ -15,7 +15,8 @@
       <span id="cafeName">مقهى مكناس</span>
     </div>
     <nav class="tabs">
-      <button class="tab active" data-view="floor">الطاولات والألعاب</button>
+      <button class="tab active" data-view="cafe">☕ المقهى</button>
+      <button class="tab" data-view="games">🎮 صالة الألعاب</button>
       <button class="tab" data-view="menu">قائمة المنتجات</button>
       <button class="tab" data-view="reports">التقارير</button>
       <button class="tab" data-view="settings">الإعدادات</button>
@@ -26,12 +27,12 @@
   <main>
     <!-- الطاولات والألعاب -->
     <section id="view-floor" class="view active">
+      <h1 class="section-title" id="floorTitle"></h1>
       <div class="toolbar">
         <div class="filters" id="floorFilters">
           <button class="chip active" data-filter="all">الكل</button>
-          <button class="chip" data-filter="table">طاولات المقهى</button>
-          <button class="chip" data-filter="game">صالة الألعاب</button>
           <button class="chip" data-filter="busy">المشغولة</button>
+          <button class="chip" data-filter="free">المتاحة</button>
         </div>
         <div class="summary" id="floorSummary"></div>
       </div>
@@ -71,6 +72,13 @@
           <div class="form-row compact">
             <label>من <input type="date" id="reportFrom"></label>
             <label>إلى <input type="date" id="reportTo"></label>
+            <label>القسم
+              <select id="reportSection">
+                <option value="all">الكل</option>
+                <option value="table">المقهى</option>
+                <option value="game">صالة الألعاب</option>
+              </select>
+            </label>
             <button class="btn" id="reportToday">اليوم</button>
             <button class="btn" id="reportPrint">طباعة</button>
             <button class="btn" id="reportCsv">تصدير CSV</button>
@@ -84,7 +92,7 @@
           <div id="reportTop"></div>
         </div>
         <div class="panel">
-          <h2>إيرادات الألعاب حسب المحطة</h2>
+          <h2>المداخيل حسب الطاولة / المحطة</h2>
           <div id="reportGames"></div>
         </div>
       </div>

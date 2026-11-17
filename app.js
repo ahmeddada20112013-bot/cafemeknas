@@ -59,6 +59,8 @@ function toast(msg) {
   clearTimeout(toast._h); toast._h = setTimeout(() => t.classList.remove('show'), 2200);
 }
 const stationById = id => state.stations.find(s => s.id === id);
+// القسم الذي تنتمي إليه الفاتورة: المقهى (table) أو صالة الألعاب (game)
+const saleSection = s => s.stationType || (s.game ? 'game' : 'table');
 
 /* ================= منطق الطلب والأثمنة ================= */
 function getOrder(stationId, create = false) {
@@ -100,11 +102,17 @@ document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () =>
 function showView(v) {
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.view === v));
   document.querySelectorAll('.view').forEach(s => s.classList.toggle('active', s.id === 'view-' + v));
-  ({ floor: renderFloor, menu: renderProducts, reports: renderReports, settings: renderSettings })[v]();
+  if (v === 'cafe' || v === 'games') {
+    floorSection = v === 'games' ? 'game' : 'table';
+    $('#view-floor').classList.add('active');
+    $('#view-floor').classList.toggle('games', floorSection === 'game');
+    return renderFloor();
+  }
+  ({ menu: renderProducts, reports: renderReports, settings: renderSettings })[v]();
 }
 
 /* ================= الطاولات ================= */
-let floorFilter = 'all';
+let floorFilter = 'all', floorSection = 'table';
 $('#floorFilters').addEventListener('click', e => {
   const b = e.target.closest('.chip'); if (!b) return;
   floorFilter = b.dataset.filter;
@@ -115,17 +123,21 @@ $('#floorFilters').addEventListener('click', e => {
 function renderFloor() {
   $('#cafeName').textContent = state.settings.name;
   document.title = state.settings.name + ' — الطلبات والألعاب';
-  let list = state.stations;
-  if (floorFilter === 'table' || floorFilter === 'game') list = list.filter(s => s.type === floorFilter);
+  const isGames = floorSection === 'game';
+  $('#floorTitle').textContent = isGames ? '🎮 صالة الألعاب' : '☕ المقهى';
+  const all = state.stations.filter(s => s.type === floorSection);
+  let list = all;
   if (floorFilter === 'busy') list = list.filter(s => state.open[s.id]);
-  $('#stationsGrid').innerHTML = list.map(stationCard).join('') || '<div class="empty">لا توجد عناصر</div>';
+  if (floorFilter === 'free') list = list.filter(s => !state.open[s.id]);
+  $('#stationsGrid').innerHTML = list.map(stationCard).join('') ||
+    `<div class="empty">${all.length ? 'لا توجد عناصر' : (isGames ? 'لا توجد محطات ألعاب — أضفها من الإعدادات' : 'لا توجد طاولات — أضفها من الإعدادات')}</div>`;
 
-  const busy = state.stations.filter(s => state.open[s.id]);
+  const busy = all.filter(s => state.open[s.id]);
   const openTotal = busy.reduce((sum, s) => sum + orderTotals(s, state.open[s.id]).total, 0);
   const today = dayKey(Date.now());
-  const todaySales = state.sales.filter(s => dayKey(s.closedAt) === today).reduce((a, s) => a + s.total, 0);
+  const todaySales = state.sales.filter(s => dayKey(s.closedAt) === today && saleSection(s) === floorSection).reduce((a, s) => a + s.total, 0);
   $('#floorSummary').innerHTML =
-    `<span>مشغولة: <b>${busy.length}/${state.stations.length}</b></span>` +
+    `<span>${isGames ? 'محطات مشغولة' : 'طاولات مشغولة'}: <b>${busy.length}/${all.length}</b></span>` +
     `<span>طلبات مفتوحة: <b>${money(openTotal)}</b></span>` +
     `<span>مبيعات اليوم: <b>${money(todaySales)}</b></span>`;
 }
@@ -329,7 +341,8 @@ $('#orderMoveBtn').addEventListener('click', () => {
   if (isEmptyOrder(state.open[current])) return toast('الطلب فارغ');
   const free = state.stations.filter(s => s.id !== current && !state.open[s.id]);
   if (!free.length) return toast('لا توجد طاولة متاحة');
-  $('#moveTarget').innerHTML = free.map(s => `<option value="${s.id}">${esc(s.icon)} ${esc(s.name)}</option>`).join('');
+  const opts = type => free.filter(s => s.type === type).map(s => `<option value="${s.id}">${esc(s.icon)} ${esc(s.name)}</option>`).join('');
+  $('#moveTarget').innerHTML = `<optgroup label="☕ المقهى">${opts('table')}</optgroup><optgroup label="🎮 صالة الألعاب">${opts('game')}</optgroup>`;
   $('#moveDialog').showModal();
 });
 $('#moveCancel').addEventListener('click', () => $('#moveDialog').close());
@@ -415,11 +428,16 @@ $('#productsTable').addEventListener('click', e => {
 function initReportDates() { const t = dayKey(Date.now()); $('#reportFrom').value = t; $('#reportTo').value = t; }
 $('#reportFrom').addEventListener('change', renderReports);
 $('#reportTo').addEventListener('change', renderReports);
+$('#reportSection').addEventListener('change', renderReports);
 $('#reportToday').addEventListener('click', () => { initReportDates(); renderReports(); });
 
 function reportSales() {
   const from = $('#reportFrom').value, to = $('#reportTo').value;
-  return state.sales.filter(s => { const k = dayKey(s.closedAt); return (!from || k >= from) && (!to || k <= to); });
+  const sec = $('#reportSection').value;
+  return state.sales.filter(s => {
+    const k = dayKey(s.closedAt);
+    return (!from || k >= from) && (!to || k <= to) && (sec === 'all' || saleSection(s) === sec);
+  });
 }
 function reportData() {
   const sales = reportSales();
@@ -427,13 +445,13 @@ function reportData() {
   const top = {}, games = {};
   sales.forEach(s => {
     s.items.forEach(i => { (top[i.name] ??= { qty: 0, total: 0 }); top[i.name].qty += i.qty; top[i.name].total += i.qty * i.price; });
-    if (s.game) {
-      (games[s.stationName] ??= { ms: 0, matches: 0, total: 0, n: 0 });
-      const g = games[s.stationName]; g.ms += s.game.playedMs; g.matches += s.game.matches; g.total += s.game.cost; g.n++;
-    }
+    (games[s.stationName] ??= { ms: 0, matches: 0, total: 0, n: 0 });
+    const g = games[s.stationName]; g.n++; g.total += s.total;
+    if (s.game) { g.ms += s.game.playedMs; g.matches += s.game.matches; }
   });
   return {
     sales, top, games,
+    cafe: sum(s => saleSection(s) === 'table' ? s.total : 0), games: sum(s => saleSection(s) === 'game' ? s.total : 0),
     total: sum(s => s.total), items: sum(s => s.itemsTotal), game: sum(s => s.gameTotal), discount: sum(s => s.discount),
     cash: sum(s => s.payment === 'cash' ? s.total : 0), card: sum(s => s.payment === 'card' ? s.total : 0),
   };
@@ -444,7 +462,8 @@ function renderReports() {
   const stat = (l, v) => `<div class="stat"><div class="v">${v}</div><div class="l">${l}</div></div>`;
   $('#reportStats').innerHTML =
     stat('إجمالي المداخيل', money(d.total)) + stat('عدد الفواتير', d.sales.length) +
-    stat('المشروبات والمأكولات', money(d.items)) + stat('صالة الألعاب', money(d.game)) +
+    stat('مداخيل المقهى', money(d.cafe)) + stat('مداخيل صالة الألعاب', money(d.games)) +
+    stat('المشروبات والمأكولات', money(d.items)) + stat('ثمن اللعب', money(d.game)) +
     stat('نقداً', money(d.cash)) + stat('بطاقة', money(d.card)) + stat('التخفيضات', money(d.discount)) +
     stat('متوسط الفاتورة', money(d.sales.length ? d.total / d.sales.length : 0));
 
@@ -453,14 +472,14 @@ function renderReports() {
     ${top.map(([n, v]) => `<tr><td>${esc(n)}</td><td class="num">${v.qty}</td><td class="num">${money(v.total)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">لا توجد بيانات</div>';
 
   const games = Object.entries(d.games).sort((a, b) => b[1].total - a[1].total);
-  $('#reportGames').innerHTML = games.length ? `<table><thead><tr><th>المحطة</th><th class="num">جلسات</th><th class="num">الوقت / الجولات</th><th class="num">المبلغ</th></tr></thead><tbody>
+  $('#reportGames').innerHTML = games.length ? `<table><thead><tr><th>المحطة</th><th class="num">جلسات</th><th class="num">وقت اللعب / الجولات</th><th class="num">المداخيل</th></tr></thead><tbody>
     ${games.map(([n, v]) => `<tr><td>${esc(n)}</td><td class="num">${v.n}</td><td class="num">${v.ms ? fmtDur(v.ms) : ''}${v.matches ? ` ${v.matches} جولة` : ''}</td><td class="num">${money(v.total)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">لا توجد بيانات</div>';
 
   const list = [...d.sales].reverse();
   $('#reportSales').innerHTML = list.length ? `<div class="table-wrap"><table><thead><tr>
-    <th>رقم</th><th>التاريخ</th><th>الطاولة / المحطة</th><th class="num">منتجات</th><th class="num">لعب</th><th class="num">تخفيض</th><th class="num">المجموع</th><th>الدفع</th><th></th>
+    <th>رقم</th><th>التاريخ</th><th>القسم</th><th>الطاولة / المحطة</th><th class="num">منتجات</th><th class="num">لعب</th><th class="num">تخفيض</th><th class="num">المجموع</th><th>الدفع</th><th></th>
     </tr></thead><tbody>${list.map(s => `<tr>
-      <td>${s.no}</td><td>${fmtDate(s.closedAt)}</td><td>${esc(s.stationName)}</td>
+      <td>${s.no}</td><td>${fmtDate(s.closedAt)}</td><td>${saleSection(s) === 'game' ? '🎮 الألعاب' : '☕ المقهى'}</td><td>${esc(s.stationName)}</td>
       <td class="num">${money(s.itemsTotal)}</td><td class="num">${s.gameTotal ? money(s.gameTotal) : '—'}</td>
       <td class="num">${s.discount ? money(s.discount) : '—'}</td><td class="num"><b>${money(s.total)}</b></td>
       <td>${s.payment === 'card' ? 'بطاقة' : 'نقداً'}</td>
@@ -478,10 +497,12 @@ $('#reportPrint').addEventListener('click', () => {
   const d = reportData();
   printHtml(`<div class="receipt"><h1>${esc(state.settings.name)}</h1>
     <div class="c">تقرير من ${$('#reportFrom').value} إلى ${$('#reportTo').value}</div>
+    <div class="c">${$('#reportSection').selectedOptions[0].text}</div>
     <table>
       <tr><td>عدد الفواتير</td><td class="num">${d.sales.length}</td></tr>
-      <tr><td>المشروبات والمأكولات</td><td class="num">${money(d.items)}</td></tr>
-      <tr><td>صالة الألعاب</td><td class="num">${money(d.game)}</td></tr>
+      <tr><td>مداخيل المقهى</td><td class="num">${money(d.cafe)}</td></tr>
+      <tr><td>مداخيل صالة الألعاب</td><td class="num">${money(d.games)}</td></tr>
+      <tr><td>منها ثمن اللعب</td><td class="num">${money(d.game)}</td></tr>
       <tr><td>التخفيضات</td><td class="num">${money(d.discount)}</td></tr>
       <tr><td>نقداً</td><td class="num">${money(d.cash)}</td></tr>
       <tr><td>بطاقة</td><td class="num">${money(d.card)}</td></tr>
@@ -490,8 +511,8 @@ $('#reportPrint').addEventListener('click', () => {
 $('#reportCsv').addEventListener('click', () => {
   const d = reportData();
   const q = v => `"${String(v).replace(/"/g, '""')}"`;
-  const lines = [['رقم', 'التاريخ', 'الطاولة', 'المنتجات', 'مبلغ المنتجات', 'مبلغ اللعب', 'التخفيض', 'المجموع', 'الدفع'].map(q).join(',')];
-  d.sales.forEach(s => lines.push([s.no, new Date(s.closedAt).toISOString(), s.stationName,
+  const lines = [['رقم', 'التاريخ', 'القسم', 'الطاولة', 'المنتجات', 'مبلغ المنتجات', 'مبلغ اللعب', 'التخفيض', 'المجموع', 'الدفع'].map(q).join(',')];
+  d.sales.forEach(s => lines.push([s.no, new Date(s.closedAt).toISOString(), saleSection(s) === 'game' ? 'صالة الألعاب' : 'المقهى', s.stationName,
     s.items.map(i => `${i.name} x${i.qty}`).join(' | '), s.itemsTotal, s.gameTotal, s.discount, s.total, s.payment].map(q).join(',')));
   download(`sales-${$('#reportFrom').value}_${$('#reportTo').value}.csv`, '﻿' + lines.join('\n'), 'text/csv');
 });
@@ -507,17 +528,20 @@ function renderSettings() {
   $('#setName').value = st.name; $('#setCurrency').value = st.currency;
   $('#setRound').value = st.round; $('#setMin').value = st.min; $('#setFooter').value = st.footer;
   toggleGameFields();
-  $('#stationsTable').innerHTML = `<div class="table-wrap"><table>
-    <thead><tr><th></th><th>الاسم</th><th>النوع</th><th class="num">السعر</th><th></th></tr></thead>
-    <tbody>${state.stations.map((s, i) => `<tr>
+  const group = (type, title) => {
+    const list = state.stations.filter(s => s.type === type);
+    return `<h3 class="subhead">${title} (${list.length})</h3>` + (list.length ? `<div class="table-wrap"><table>
+    <thead><tr><th></th><th>الاسم</th>${type === 'game' ? '<th class="num">السعر</th>' : ''}<th></th></tr></thead>
+    <tbody>${list.map((s, i) => `<tr>
       <td>${esc(s.icon)}</td><td>${esc(s.name)}</td>
-      <td>${s.type === 'game' ? 'ألعاب' : 'طاولة'}</td>
-      <td class="num">${s.type === 'game' ? `${money(s.rate)} / ${s.billing === 'match' ? 'جولة' : 'ساعة'}` : '—'}</td>
+      ${type === 'game' ? `<td class="num">${money(s.rate)} / ${s.billing === 'match' ? 'جولة' : 'ساعة'}</td>` : ''}
       <td class="num">
-        <button class="btn sm" data-up="${i}" ${i === 0 ? 'disabled' : ''}>▲</button>
+        <button class="btn sm" data-up="${s.id}" ${i === 0 ? 'disabled' : ''}>▲</button>
         <button class="btn sm" data-sedit="${s.id}">تعديل</button>
         <button class="btn sm danger" data-sdel="${s.id}">حذف</button>
-      </td></tr>`).join('')}</tbody></table></div>`;
+      </td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">لا يوجد</div>');
+  };
+  $('#stationsTable').innerHTML = group('table', '☕ طاولات المقهى') + group('game', '🎮 محطات صالة الألعاب');
 }
 $('#settingsForm').addEventListener('submit', e => {
   e.preventDefault();
@@ -564,8 +588,10 @@ $('#stationsTable').addEventListener('click', e => {
     if (!confirm('حذف هذه الطاولة / المحطة؟')) return;
     state.stations = state.stations.filter(s => s.id !== del.dataset.sdel); save(); renderSettings();
   } else if (up) {
-    const i = +up.dataset.up; const a = state.stations;
-    [a[i - 1], a[i]] = [a[i], a[i - 1]]; save(); renderSettings();
+    // تبديل المكان مع العنصر السابق من نفس القسم
+    const a = state.stations, i = a.findIndex(s => s.id === up.dataset.up);
+    let j = i - 1; while (j >= 0 && a[j].type !== a[i].type) j--;
+    if (j >= 0) { [a[j], a[i]] = [a[i], a[j]]; save(); renderSettings(); }
   }
 });
 $('#backupExport').addEventListener('click', () =>
