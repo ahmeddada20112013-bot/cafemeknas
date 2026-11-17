@@ -653,8 +653,11 @@ function updateLoginHint() {
   const role = document.querySelector('input[name=role]:checked').value;
   const usesDefault = MODE === 'local' ? !state.users[role]?.hash : MODE === 'server' ? !backend.info?.hasPassword?.[role] : false;
   $('#loginHint').textContent = usesDefault ? `كلمة المرور الافتراضية: ${DEFAULT_PASSWORDS[role]} — غيّرها من الإعدادات بعد الدخول` : '';
+  $('#diagBtn').hidden = MODE !== 'supabase';
   $('#loginMode').textContent = {
-    local: '💻 وضع هذا الجهاز فقط (بدون خادم)',
+    local: location.protocol === 'https:'
+      ? '⚠️ Supabase غير مفعّل لأن config.js فارغ — البيانات محفوظة في هذا الجهاز فقط'
+      : '💻 وضع هذا الجهاز فقط (بدون خادم)',
     server: '🟢 متصل بخادم المقهى — كل الأجهزة متزامنة',
     supabase: '☁️ عبر Supabase — كل الأجهزة متزامنة عبر الإنترنت',
   }[MODE];
@@ -676,7 +679,7 @@ $('#loginForm').addEventListener('submit', async e => {
       enterApp(role);
     } else fail('كلمة المرور غير صحيحة');
   } catch (err) {
-    fail(err.status ? err.message : 'تعذّر الاتصال: ' + (err.message || ''));
+    fail(err.message || 'تعذّر الاتصال');
   } finally { btn.disabled = false; }
 });
 function startRemote(d) { base = d.state; state = clone(base); setSync('ok'); }
@@ -703,6 +706,13 @@ function logout() {
   $('#loginPassword').focus();
 }
 $('#logoutBtn').addEventListener('click', logout);
+$('#diagBtn').addEventListener('click', async () => {
+  const box = $('#diagResult');
+  box.hidden = false; box.innerHTML = '<li>⏳ جارٍ الفحص...</li>';
+  const icon = { ok: '✅', bad: '❌', warn: '⚠️', info: 'ℹ️' };
+  try { box.innerHTML = (await backend.diagnose()).map(([k, t]) => `<li class="${k}">${icon[k]} ${esc(t)}</li>`).join(''); }
+  catch (e) { box.innerHTML = `<li class="bad">❌ ${esc(e.message)}</li>`; }
+});
 $('#passwordForm').addEventListener('submit', async e => {
   e.preventDefault();
   if (!isOwner()) return;
@@ -887,10 +897,21 @@ const SupabaseBackend = {
     this.sb.auth.onAuthStateChange(ev => { if (ev === 'SIGNED_OUT') sessionExpired(); });
     return true;
   },
+  // ترجمة أخطاء Supabase الشائعة إلى رسالة واضحة مع طريقة الإصلاح
+  explain(err) {
+    const m = String(err?.message || ''), c = err?.code;
+    if (c === 'PGRST205' || c === '42P01' || /could not find the table|does not exist/i.test(m))
+      return 'جداول قاعدة البيانات غير موجودة: شغّل ملف supabase/schema.sql في SQL Editor';
+    if (c === '42501' || /permission denied/i.test(m))
+      return 'صلاحيات ناقصة في قاعدة البيانات: أعد تشغيل النسخة الأخيرة من supabase/schema.sql في SQL Editor';
+    if (/invalid api key|no api key/i.test(m)) return 'مفتاح anon في config.js غير صحيح';
+    if (/failed to fetch|networkerror|load failed/i.test(m)) return 'تعذّر الوصول إلى Supabase: تحقّق من supabaseUrl في config.js ومن الإنترنت';
+    return m || 'خطأ غير معروف';
+  },
   check(res) {
     if (res.error) {
       const { message, code } = res.error;
-      const e = new Error(message || 'خطأ في الاتصال');
+      const e = new Error(this.explain(res.error));
       e.code = code;
       if (code === 'PGRST301' || /jwt/i.test(message || '')) { e.status = 401; sessionExpired(); }
       // أخطاء الصلاحيات والقيود: لا فائدة من إعادة المحاولة
@@ -911,9 +932,13 @@ const SupabaseBackend = {
     if (!email) throw Object.assign(new Error('لم يُحدَّد بريد هذا الحساب في config.js'), { status: 400 });
     const { error } = await this.sb.auth.signInWithPassword({ email, password });
     if (error) {
-      const msg = error.status === 400 ? 'كلمة المرور غير صحيحة'
-        : !error.status || error.name === 'AuthRetryableFetchError' ? 'تعذّر الاتصال بـ Supabase — تحقّق من الإنترنت'
-        : error.message;
+      const m = error.message || '';
+      const msg = error.code === 'email_not_confirmed' || /not confirmed/i.test(m)
+          ? 'البريد غير مؤكَّد: في Supabase ← Authentication ← Users احذف المستخدم وأعد إنشاءه مع تفعيل Auto Confirm User'
+        : error.code === 'invalid_credentials' || /invalid login credentials/i.test(m)
+          ? `البريد أو كلمة المرور غير صحيحة. تأكّد أن المستخدم ${email} موجود في Supabase ← Authentication ← Users بنفس البريد المكتوب في config.js`
+        : !error.status || error.name === 'AuthRetryableFetchError' ? this.explain({ message: 'failed to fetch' })
+        : this.explain(error);
       throw Object.assign(new Error(msg), { status: error.status || 503 });
     }
     try {
@@ -923,6 +948,27 @@ const SupabaseBackend = {
     } catch (e) { await this.sb.auth.signOut(); throw e; }
   },
   async logout() { await this.sb.auth.signOut(); },
+  // فحص الإعداد قبل تسجيل الدخول
+  async diagnose() {
+    const out = [], c = this.cfg;
+    out.push(['ok', `config.js: ${c.supabaseUrl}`]);
+    try {
+      const r = await fetch(c.supabaseUrl.replace(/\/$/, '') + '/auth/v1/settings', { headers: { apikey: c.supabaseAnonKey } });
+      if (r.status === 401) out.push(['bad', 'مفتاح anon في config.js غير صحيح (انسخه من Project Settings ← API Keys)']);
+      else if (!r.ok) out.push(['bad', `Supabase أجاب بخطأ ${r.status}`]);
+      else {
+        out.push(['ok', 'الاتصال بـ Supabase والمفتاح صحيحان']);
+        const st = await r.json().catch(() => ({}));
+        if (st.disable_signup === false) out.push(['warn', 'التسجيل مفتوح لأي شخص: أوقف Allow new users to sign up (لا خطر على البيانات لكنه أفضل)']);
+      }
+    } catch { out.push(['bad', 'تعذّر الوصول إلى supabaseUrl: تحقّق من الرابط في config.js ومن الإنترنت']); return out; }
+    const { error } = await this.sb.from('staff').select('role').limit(1);
+    if (!error || error.code === '42501' || /permission denied/i.test(error.message)) out.push(['ok', 'جداول قاعدة البيانات موجودة']);
+    else out.push(['bad', this.explain(error)]);
+    for (const r of ['owner', 'manager']) if (!c.emails?.[r]) out.push(['bad', `بريد ${r === 'owner' ? 'صاحب المقهى' : 'المدير'} غير مكتوب في config.js`]);
+    out.push(['info', 'إذا كان كل شيء ✅ وفشل الدخول، ستظهر رسالة الخطأ الدقيقة تحت خانة كلمة المرور']);
+    return out;
+  },
   async loadAllSales() {
     const all = [];
     for (let from = 0; ; from += 1000) {
@@ -940,7 +986,7 @@ const SupabaseBackend = {
       q('staff', 'user_id,role,title'), q('config', 'key,value'), q('open_orders', 'station_id,data'), this.loadAllSales(),
     ]);
     const me = staff.find(s => s.user_id === session.user.id);
-    if (!me) throw Object.assign(new Error('هذا الحساب ليس من طاقم المقهى (راجع جدول staff)'), { status: 403 });
+    if (!me) throw Object.assign(new Error('الحساب غير مربوط بدور: شغّل ملف supabase/staff.sql في SQL Editor (بعد التأكد من البريدين فيه)'), { status: 403 });
     this.role = me.role;
 
     const st = DEFAULT_STATE();

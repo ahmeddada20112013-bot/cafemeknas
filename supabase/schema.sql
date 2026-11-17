@@ -1,6 +1,7 @@
 -- =====================================================================
 --  مقهى مكناس — قاعدة البيانات على Supabase
---  شغّل هذا الملف مرة واحدة في: Supabase Dashboard ← SQL Editor ← New query
+--  شغّل هذا الملف في: Supabase Dashboard ← SQL Editor ← New query ← Run
+--  يمكن تشغيله أكثر من مرة دون مشكلة (لا يحذف أي بيانات).
 -- =====================================================================
 
 -- ---------- الحسابات: صاحب المقهى والمدير فقط ----------
@@ -52,6 +53,14 @@ create table if not exists public.chat (
   text       text not null check (char_length(text) between 1 and 1000),
   created_at timestamptz not null default now()
 );
+
+-- ---------- صلاحيات الوصول للجداول ----------
+-- (بعض مشاريع Supabase الجديدة لا تعطي هذه الصلاحيات تلقائياً)
+grant usage on schema public to authenticated;
+grant select on public.staff to authenticated;
+grant select, insert, update, delete on public.config, public.open_orders, public.sales, public.chat to authenticated;
+grant usage, select on all sequences in schema public to authenticated;
+revoke all on public.staff, public.config, public.open_orders, public.sales, public.chat from anon;
 
 -- ---------- الصلاحيات (Row Level Security) ----------
 alter table public.staff       enable row level security;

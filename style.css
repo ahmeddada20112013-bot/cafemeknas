@@ -275,3 +275,9 @@ body.locked .chat-fab, body.locked .chat-panel { display: none !important; }
   .mtab { white-space: nowrap; font-size: .85rem; padding: 10px 4px; }
   #mBack { flex: none; padding: 10px; }
 }
+
+.diag { text-align: start; margin: 0; padding: 10px 12px; list-style: none; background: var(--surface-2); border-radius: 10px;
+  font-size: .85rem; line-height: 1.6; display: flex; flex-direction: column; gap: 4px; }
+.diag[hidden] { display: none; }
+.diag .bad { color: var(--danger); }
+.login-error { line-height: 1.6; font-size: .9rem; }
