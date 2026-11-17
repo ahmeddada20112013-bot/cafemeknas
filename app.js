@@ -12,7 +12,7 @@ function load() {
   return DEFAULT_STATE();
 }
 function save() {
-  if (MODE === 'server') return schedulePush();
+  if (isRemote()) return schedulePush();
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
   catch (e) { toast('تعذّر حفظ البيانات في المتصفح!'); }
 }
@@ -316,7 +316,7 @@ $('#orderCheckoutBtn').addEventListener('click', async () => {
   const t = orderTotals(s, o);
   if (!confirm(`إنهاء الطلب ودفع ${r2(t.total)} ${state.settings.currency}؟`)) return;
   const sale = {
-    id: uid(), no: state.seq++, stationId: s.id, stationName: s.name, stationType: s.type,
+    id: uid(), no: state.seq != null ? state.seq++ : null, stationId: s.id, stationName: s.name, stationType: s.type,
     openedAt: o.openedAt, closedAt: Date.now(),
     items: o.items.map(i => ({ ...i })),
     game: s.type === 'game' ? gameRecord(o, t.game) : null,
@@ -331,7 +331,7 @@ $('#orderCheckoutBtn').addEventListener('click', async () => {
   await flushSync();
   const saved = state.sales.find(x => x.id === sale.id) || sale;
   printReceipt(saved);
-  toast(`تم تسجيل الفاتورة رقم ${saved.no}`);
+  toast(saved.no != null ? `تم تسجيل الفاتورة رقم ${saved.no}` : 'تم تسجيل الفاتورة (سيُعطى الرقم عند عودة الاتصال)');
 });
 
 $('#orderPrintBtn').addEventListener('click', () => {
@@ -383,7 +383,7 @@ function receiptHtml(sale) {
   }
   return `<div class="receipt">
     <h1>${esc(st.name)}</h1>
-    <div class="c">${sale.draft ? 'فاتورة مؤقتة' : 'فاتورة رقم ' + sale.no}</div>
+    <div class="c">${sale.draft ? 'فاتورة مؤقتة' : 'فاتورة رقم ' + (sale.no ?? '—')}</div>
     <div class="c">${esc(sale.stationName)} — ${fmtDate(sale.closedAt)}</div>
     <table>${rows}${game}</table>
     ${sale.discount ? `<div>التخفيض: −${r2(sale.discount).toFixed(2)}</div>` : ''}
@@ -490,7 +490,7 @@ function renderReports() {
   $('#reportSales').innerHTML = list.length ? `<div class="table-wrap"><table><thead><tr>
     <th>رقم</th><th>التاريخ</th><th>القسم</th><th>الطاولة / المحطة</th><th class="num">منتجات</th><th class="num">لعب</th><th class="num">تخفيض</th><th class="num">المجموع</th><th>الدفع</th><th>بواسطة</th><th></th>
     </tr></thead><tbody>${list.map(s => `<tr>
-      <td>${s.no}</td><td>${fmtDate(s.closedAt)}</td><td>${saleSection(s) === 'game' ? '🎮 الألعاب' : '☕ المقهى'}</td><td>${esc(s.stationName)}</td>
+      <td>${s.no ?? '—'}</td><td>${fmtDate(s.closedAt)}</td><td>${saleSection(s) === 'game' ? '🎮 الألعاب' : '☕ المقهى'}</td><td>${esc(s.stationName)}</td>
       <td class="num">${money(s.itemsTotal)}</td><td class="num">${s.gameTotal ? money(s.gameTotal) : '—'}</td>
       <td class="num">${s.discount ? money(s.discount) : '—'}</td><td class="num"><b>${money(s.total)}</b></td>
       <td>${s.payment === 'card' ? 'بطاقة' : 'نقداً'}</td><td>${esc(s.by || '')}</td>
@@ -610,7 +610,7 @@ $('#backupImport').addEventListener('change', async e => {
     if (!confirm('سيتم استبدال كل البيانات الحالية. متابعة؟')) return;
     const keepUsers = state.users;
     state = migrate(Object.assign(DEFAULT_STATE(), data));
-    if (!data.users || MODE === 'server') state.users = keepUsers;
+    if (!data.users || isRemote()) state.users = keepUsers;
     save(); renderSettings(); toast('تم الاستيراد');
   } catch { toast('ملف غير صالح'); }
   e.target.value = '';
@@ -621,15 +621,17 @@ $('#clearSales').addEventListener('click', () => {
 });
 
 /* ================= تسجيل الدخول ================= */
-// وضعان للتشغيل:
-//  - local : فتح index.html مباشرة — البيانات في هذا المتصفح فقط.
-//  - server: عبر الخادم (node server.js) — كل الأجهزة متزامنة + الدردشة.
+// ثلاثة أوضاع للتشغيل:
+//  - local    : فتح index.html مباشرة — البيانات في هذا المتصفح فقط.
+//  - server   : عبر خادم المقهى (node server.js) — الأجهزة على نفس الواي فاي متزامنة.
+//  - supabase : عبر Supabase (يُفعَّل بملء config.js) — كل الأجهزة متزامنة عبر الإنترنت.
 const SESSION_KEY = 'cafe-meknas-session';
 const TOKEN_KEY = 'cafe-meknas-token';
 const DEFAULT_PASSWORDS = { owner: '1234', manager: '0000' };
-let MODE = 'local', serverInfo = null;
+let MODE = 'local', backend = null;
 let currentUser = null;
 const isOwner = () => currentUser === 'owner';
+const isRemote = () => MODE !== 'local';
 const roleTitle = r => state.users[r]?.title || (r === 'owner' ? 'صاحب المقهى' : 'مدير المقهى');
 
 async function hashPassword(role, pw) {
@@ -649,28 +651,35 @@ async function checkLocalPassword(role, pw) {
 }
 function updateLoginHint() {
   const role = document.querySelector('input[name=role]:checked').value;
-  const has = MODE === 'server' ? serverInfo?.hasPassword?.[role] : !!state.users[role]?.hash;
-  $('#loginHint').textContent = has ? '' : `كلمة المرور الافتراضية: ${DEFAULT_PASSWORDS[role]} — غيّرها من الإعدادات بعد الدخول`;
-  $('#loginMode').textContent = MODE === 'server' ? '🟢 متصل بخادم المقهى — كل الأجهزة متزامنة' : '💻 وضع هذا الجهاز فقط (بدون خادم)';
+  const usesDefault = MODE === 'local' ? !state.users[role]?.hash : MODE === 'server' ? !backend.info?.hasPassword?.[role] : false;
+  $('#loginHint').textContent = usesDefault ? `كلمة المرور الافتراضية: ${DEFAULT_PASSWORDS[role]} — غيّرها من الإعدادات بعد الدخول` : '';
+  $('#loginMode').textContent = {
+    local: '💻 وضع هذا الجهاز فقط (بدون خادم)',
+    server: '🟢 متصل بخادم المقهى — كل الأجهزة متزامنة',
+    supabase: '☁️ عبر Supabase — كل الأجهزة متزامنة عبر الإنترنت',
+  }[MODE];
 }
 document.querySelectorAll('input[name=role]').forEach(r => r.addEventListener('change', () => { updateLoginHint(); $('#loginPassword').focus(); }));
 $('#loginForm').addEventListener('submit', async e => {
   e.preventDefault();
   const role = document.querySelector('input[name=role]:checked').value, pw = $('#loginPassword').value;
   const fail = msg => { $('#loginError').textContent = msg; $('#loginPassword').select(); };
-  if (MODE === 'server') {
-    try {
-      const r = await api('POST', 'api/login', { role, password: pw });
-      token = r.token;
-      try { localStorage.setItem(TOKEN_KEY, token); } catch {}
-      await resync(true);
-      enterApp(r.role);
-    } catch (err) { fail(err.status === 401 || err.status === 429 ? err.message : 'تعذّر الاتصال بالخادم'); }
-  } else if (await checkLocalPassword(role, pw)) {
-    try { sessionStorage.setItem(SESSION_KEY, role); } catch {}
-    enterApp(role);
-  } else fail('كلمة المرور غير صحيحة');
+  const btn = $('#loginForm button[type=submit]');
+  btn.disabled = true;
+  try {
+    if (isRemote()) {
+      const d = await backend.login(role, pw);
+      startRemote(d);
+      enterApp(d.role);
+    } else if (await checkLocalPassword(role, pw)) {
+      try { sessionStorage.setItem(SESSION_KEY, role); } catch {}
+      enterApp(role);
+    } else fail('كلمة المرور غير صحيحة');
+  } catch (err) {
+    fail(err.status ? err.message : 'تعذّر الاتصال: ' + (err.message || ''));
+  } finally { btn.disabled = false; }
 });
+function startRemote(d) { base = d.state; state = clone(base); setSync('ok'); }
 function enterApp(role) {
   currentUser = role;
   $('#loginPassword').value = ''; $('#loginError').textContent = '';
@@ -678,18 +687,18 @@ function enterApp(role) {
   document.body.classList.add('role-' + role);
   $('#userName').textContent = (role === 'owner' ? '👑 ' : '🧾 ') + roleTitle(role);
   showView('cafe');
-  if (MODE === 'server') { connectEvents(); loadChat(); }
+  if (isRemote()) { backend.subscribe(); loadChat(); }
   renderChat();
 }
 function logout() {
   if (dlg.open) closeOrder();
   closeChat();
-  if (MODE === 'server' && token) { api('POST', 'api/logout').catch(() => {}); }
-  disconnectEvents();
-  token = null; currentUser = null; chatMessages = [];
-  try { sessionStorage.removeItem(SESSION_KEY); localStorage.removeItem(TOKEN_KEY); } catch {}
+  const wasIn = currentUser;
+  currentUser = null; chatMessages = [];
+  if (backend) { backend.unsubscribe(); if (wasIn) backend.logout().catch(() => {}); }
+  try { sessionStorage.removeItem(SESSION_KEY); } catch {}
   document.body.classList.add('locked');
-  $('#loginCafe').textContent = MODE === 'server' ? serverInfo.name : state.settings.name;
+  $('#loginCafe').textContent = backend?.info?.name || state.settings.name;
   updateLoginHint();
   $('#loginPassword').focus();
 }
@@ -699,8 +708,8 @@ $('#passwordForm').addEventListener('submit', async e => {
   if (!isOwner()) return;
   const role = $('#pwUser').value, pw = $('#pwNew').value;
   if (pw !== $('#pwConfirm').value) return toast('كلمتا المرور غير متطابقتين');
-  if (MODE === 'server') {
-    try { await api('POST', 'api/password', { role, password: pw }); }
+  if (isRemote()) {
+    try { await backend.setPassword(role, pw); }
     catch (err) { return toast(err.message); }
   } else {
     state.users[role].hash = await hashPassword(role, pw);
@@ -709,26 +718,13 @@ $('#passwordForm').addEventListener('submit', async e => {
   $('#passwordForm').reset(); toast(`تم تغيير كلمة مرور ${roleTitle(role)}`);
 });
 
-/* ================= المزامنة مع الخادم ================= */
-let token = null, rev = 0, base = null, pushTimer = null, pushing = false, pushAgain = false, es = null;
-async function api(method, url, body) {
-  const r = await fetch(url, {
-    method, cache: 'no-store',
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    if (r.status === 401 && url !== 'api/login' && currentUser) { toast('انتهت الجلسة، سجّل الدخول من جديد'); logout(); }
-    throw Object.assign(new Error(data.error || 'خطأ في الاتصال'), { status: r.status });
-  }
-  return data;
-}
+/* ================= المزامنة (مشتركة بين الخادم و Supabase) ================= */
+let base = null, pushTimer = null, pushing = false, pushAgain = false;
 function setSync(status) {
   const el = $('#syncStatus');
   if (!el) return;
   el.dataset.status = status;
-  el.title = { ok: 'متزامن مع الخادم', busy: 'جارٍ الحفظ...', off: 'غير متصل بالخادم — سيتم الحفظ عند عودة الاتصال' }[status] || '';
+  el.title = { ok: 'متزامن', busy: 'جارٍ الحفظ...', off: 'غير متصل — سيتم الحفظ عند عودة الاتصال' }[status] || '';
 }
 // يطبّق تغييراً وصل من الخادم مع الحفاظ على التعديلات المحلية التي لم تُرسل بعد
 function rebase(updateBase) {
@@ -740,25 +736,19 @@ function rebase(updateBase) {
     applyPatch(state, pending);
   }
 }
-function receive(newRev, patch) {
-  if (newRev <= rev) return;
-  if (newRev !== rev + 1) return resync();
+function applyRemote(patch) {
+  if (!base) return;
   rebase(() => applyPatch(base, patch));
-  rev = newRev;
   refreshUI();
 }
-async function resync(initial = false) {
-  const d = await api('GET', 'api/state');
-  const users = d.state.users;
-  if (initial) { base = d.state; state = clone(base); }
-  else rebase(() => { base = d.state; });
-  state.users = users; base.users = users;
-  rev = d.rev;
-  if (!initial) { refreshUI(); schedulePush(); }
-  return d;
+async function resync() {
+  const d = await backend.loadState();
+  rebase(() => { base = d.state; });
+  refreshUI();
+  schedulePush();
 }
 function schedulePush() {
-  if (MODE !== 'server' || !base) return;
+  if (!isRemote() || !base) return;
   clearTimeout(pushTimer);
   pushTimer = setTimeout(push, 250);
 }
@@ -768,52 +758,292 @@ async function push() {
   if (!patch) return setSync('ok');
   pushing = true; setSync('busy');
   try {
-    const r = await api('POST', 'api/patch', { patch });
-    if (r.patch) receive(r.rev, r.patch);
+    await backend.push(patch);
     setSync('ok');
   } catch (e) {
+    console.warn('sync', e);
     setSync('off');
-    if (e.status !== 401) setTimeout(schedulePush, 3000);
+    if (e.fatal) { toast('رفض الخادم التعديل: ' + e.message); resync().catch(() => {}); }
+    else if (e.status !== 401) setTimeout(schedulePush, 3000);
   } finally {
     pushing = false;
     if (pushAgain) { pushAgain = false; schedulePush(); }
   }
 }
 async function flushSync() {
-  if (MODE !== 'server') return;
+  if (!isRemote()) return;
   clearTimeout(pushTimer);
   while (pushing) await new Promise(r => setTimeout(r, 50));
   await push();
 }
-function connectEvents() {
-  disconnectEvents();
-  es = new EventSource('api/events?token=' + encodeURIComponent(token));
-  es.addEventListener('hello', e => { setSync('ok'); if (JSON.parse(e.data).rev !== rev) resync().catch(() => {}); });
-  es.addEventListener('patch', e => { const d = JSON.parse(e.data); receive(d.rev, d.patch); });
-  es.addEventListener('users', e => { const u = JSON.parse(e.data); state.users = u; if (base) base.users = u; });
-  es.addEventListener('chat', e => onChatMessage(JSON.parse(e.data)));
-  es.onerror = () => {
-    setSync('off');
-    // التحقق من أن الجلسة ما زالت صالحة (إن لم تكن، api() يُخرج المستخدم)
-    clearTimeout(connectEvents._t);
-    connectEvents._t = setTimeout(() => { if (currentUser) api('GET', 'api/ping').then(() => resync()).catch(() => {}); }, 4000);
-  };
+function sessionExpired() {
+  if (!currentUser) return;
+  toast('انتهت الجلسة، سجّل الدخول من جديد');
+  logout();
 }
-function disconnectEvents() { if (es) { es.close(); es = null; } }
 // إعادة رسم الواجهة بعد وصول تغييرات من جهاز آخر
 function refreshUI() {
   if (!currentUser) return;
   if (dlg.open && current) {
     if (!stationById(current)) { current = null; dlg.close(); }
-    else if (!state.open[current] && document.activeElement?.id !== 'orderDiscount') renderOrderSide();
     else if (document.activeElement?.id !== 'orderDiscount') renderOrderSide();
   }
   const v = document.querySelector('.tab.active')?.dataset.view;
   if (v === 'cafe' || v === 'games') renderFloor();
   else if (v === 'reports') renderReports();
   else if (v === 'menu') renderProducts();
-  else if (v === 'settings') { $('#stationsTable') && renderStationsTable(); }
+  else if (v === 'settings') renderStationsTable();
 }
+
+/* ----- الواجهة الخلفية 1: خادم المقهى (node server.js) ----- */
+const NodeBackend = {
+  info: null, token: null, rev: 0, es: null,
+  async detect() {
+    if (!location.protocol.startsWith('http')) return false;
+    try {
+      const r = await fetch('api/ping', { cache: 'no-store' });
+      if (!r.ok) return false;
+      this.info = await r.json();
+      return !!this.info.ok;
+    } catch { return false; }
+  },
+  async api(method, url, body) {
+    const r = await fetch(url, {
+      method, cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: 'Bearer ' + this.token } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (r.status === 401 && url !== 'api/login') sessionExpired();
+      throw Object.assign(new Error(data.error || 'خطأ في الاتصال'), { status: r.status, fatal: r.status === 403 });
+    }
+    return data;
+  },
+  async restore() {
+    try { this.token = localStorage.getItem(TOKEN_KEY); } catch {}
+    if (!this.token) return null;
+    try { return await this.loadState(); } catch { this.token = null; return null; }
+  },
+  async login(role, password) {
+    const r = await this.api('POST', 'api/login', { role, password });
+    this.token = r.token;
+    try { localStorage.setItem(TOKEN_KEY, r.token); } catch {}
+    return this.loadState();
+  },
+  async logout() {
+    const t = this.token;
+    this.token = null;
+    try { localStorage.removeItem(TOKEN_KEY); } catch {}
+    if (t) await fetch('api/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + t } });
+  },
+  async loadState() {
+    const d = await this.api('GET', 'api/state');
+    this.rev = d.rev;
+    return { state: d.state, role: d.role };
+  },
+  receive(newRev, patch) {
+    if (newRev <= this.rev) return;
+    if (newRev !== this.rev + 1) return void resync().catch(() => {});
+    this.rev = newRev;
+    applyRemote(patch);
+  },
+  async push(patch) {
+    const r = await this.api('POST', 'api/patch', { patch });
+    if (r.patch) this.receive(r.rev, r.patch);
+  },
+  subscribe() {
+    this.unsubscribe();
+    const es = this.es = new EventSource('api/events?token=' + encodeURIComponent(this.token));
+    es.addEventListener('hello', e => { setSync('ok'); if (JSON.parse(e.data).rev !== this.rev) resync().catch(() => {}); });
+    es.addEventListener('patch', e => { const d = JSON.parse(e.data); this.receive(d.rev, d.patch); });
+    es.addEventListener('users', e => { const u = JSON.parse(e.data); state.users = u; if (base) base.users = u; });
+    es.addEventListener('chat', e => onChatMessage(JSON.parse(e.data)));
+    es.onerror = () => {
+      setSync('off');
+      // التحقق من أن الجلسة ما زالت صالحة (إن لم تكن، يُخرج المستخدم)
+      clearTimeout(this._t);
+      this._t = setTimeout(() => { if (currentUser) resync().catch(() => {}); }, 4000);
+    };
+  },
+  unsubscribe() { if (this.es) { this.es.close(); this.es = null; } },
+  async loadChat() { return (await this.api('GET', 'api/chat')).messages; },
+  sendChat(text) { return this.api('POST', 'api/chat', { text }); },
+  async setPassword(role, password) { await this.api('POST', 'api/password', { role, password }); },
+};
+
+/* ----- الواجهة الخلفية 2: Supabase ----- */
+const SupabaseBackend = {
+  info: { name: null }, sb: null, cfg: null, role: null, channel: null,
+  detect() {
+    const c = window.CAFE_CONFIG;
+    if (!c?.supabaseUrl || !c?.supabaseAnonKey) return false;
+    if (!window.supabase?.createClient) { console.error('مكتبة Supabase غير محمّلة'); return false; }
+    this.cfg = c;
+    this.sb = window.supabase.createClient(c.supabaseUrl, c.supabaseAnonKey, {
+      auth: { persistSession: true, autoRefreshToken: true, storageKey: 'cafe-meknas-auth' },
+    });
+    // إذا أُلغيت الجلسة (مثلاً بعد تغيير كلمة المرور من جهاز آخر)
+    this.sb.auth.onAuthStateChange(ev => { if (ev === 'SIGNED_OUT') sessionExpired(); });
+    return true;
+  },
+  check(res) {
+    if (res.error) {
+      const { message, code } = res.error;
+      const e = new Error(message || 'خطأ في الاتصال');
+      e.code = code;
+      if (code === 'PGRST301' || /jwt/i.test(message || '')) { e.status = 401; sessionExpired(); }
+      // أخطاء الصلاحيات والقيود: لا فائدة من إعادة المحاولة
+      e.fatal = ['42501', '23514', '23502', '22P02'].includes(code);
+      throw e;
+    }
+    return res.data;
+  },
+  rowToSale: r => ({ ...r.data, id: r.id, no: r.no }),
+  rowToMsg: r => ({ id: 'c' + r.id, from: r.from_role, text: r.text, at: Date.parse(r.created_at) }),
+  async restore() {
+    const { data } = await this.sb.auth.getSession();
+    if (!data.session) return null;
+    try { return await this.loadState(); } catch (e) { console.warn(e); return null; }
+  },
+  async login(role, password) {
+    const email = this.cfg.emails?.[role];
+    if (!email) throw Object.assign(new Error('لم يُحدَّد بريد هذا الحساب في config.js'), { status: 400 });
+    const { error } = await this.sb.auth.signInWithPassword({ email, password });
+    if (error) {
+      const msg = error.status === 400 ? 'كلمة المرور غير صحيحة'
+        : !error.status || error.name === 'AuthRetryableFetchError' ? 'تعذّر الاتصال بـ Supabase — تحقّق من الإنترنت'
+        : error.message;
+      throw Object.assign(new Error(msg), { status: error.status || 503 });
+    }
+    try {
+      const d = await this.loadState();
+      if (d.role !== role) throw Object.assign(new Error('هذا الحساب غير مرتبط بالدور المختار'), { status: 403 });
+      return d;
+    } catch (e) { await this.sb.auth.signOut(); throw e; }
+  },
+  async logout() { await this.sb.auth.signOut(); },
+  async loadAllSales() {
+    const all = [];
+    for (let from = 0; ; from += 1000) {
+      const rows = this.check(await this.sb.from('sales').select('id,no,data').order('no').range(from, from + 999));
+      all.push(...rows);
+      if (rows.length < 1000) break;
+    }
+    return all.map(this.rowToSale);
+  },
+  async loadState() {
+    const { data: { session } } = await this.sb.auth.getSession();
+    if (!session) throw Object.assign(new Error('يجب تسجيل الدخول'), { status: 401 });
+    const q = (table, cols) => this.sb.from(table).select(cols).then(r => this.check(r));
+    const [staff, config, open, sales] = await Promise.all([
+      q('staff', 'user_id,role,title'), q('config', 'key,value'), q('open_orders', 'station_id,data'), this.loadAllSales(),
+    ]);
+    const me = staff.find(s => s.user_id === session.user.id);
+    if (!me) throw Object.assign(new Error('هذا الحساب ليس من طاقم المقهى (راجع جدول staff)'), { status: 403 });
+    this.role = me.role;
+
+    const st = DEFAULT_STATE();
+    st.users = { owner: { title: 'صاحب المقهى' }, manager: { title: 'مدير المقهى' } };
+    staff.forEach(s => { st.users[s.role] = { title: s.title }; });
+    const have = new Set(config.map(r => r.key));
+    for (const r of config) st[r.key] = r.key === 'settings' ? { ...st.settings, ...r.value } : r.value;
+    const missing = ['settings', 'products', 'stations'].filter(k => !have.has(k));
+    if (missing.length) {
+      // أول تشغيل: صاحب المقهى يحفظ القوائم الافتراضية
+      if (me.role !== 'owner') throw Object.assign(new Error('يجب أن يدخل صاحب المقهى أولاً لتهيئة البيانات'), { status: 403 });
+      this.check(await this.sb.from('config').upsert(missing.map(key => ({ key, value: st[key] }))));
+    }
+    st.open = Object.fromEntries(open.map(r => [r.station_id, r.data]));
+    st.sales = sales;
+    st.seq = null; // رقم الفاتورة تعطيه قاعدة البيانات
+    this.info.name = st.settings.name;
+    return { state: st, role: me.role };
+  },
+  async push(patch) {
+    const sb = this.sb, applied = {}, now = new Date().toISOString();
+    const owner = this.role === 'owner';
+    const cfgRows = owner ? ['settings', 'products', 'stations'].filter(k => patch[k] !== undefined).map(key => ({ key, value: patch[key], updated_at: now })) : [];
+    if (cfgRows.length) {
+      this.check(await sb.from('config').upsert(cfgRows));
+      cfgRows.forEach(r => { applied[r.key] = r.value; });
+    }
+    // الفاتورة أولاً ثم حذف الطلب المفتوح، حتى لا يضيع شيء إذا انقطع الاتصال بينهما
+    if (patch.salesAdd?.length) {
+      const rows = patch.salesAdd.map(s => {
+        const { id, no, ...data } = s;
+        return { id, data, closed_at: new Date(s.closedAt || Date.now()).toISOString() };
+      });
+      this.check(await sb.from('sales').upsert(rows, { onConflict: 'id', ignoreDuplicates: true }));
+      const saved = this.check(await sb.from('sales').select('id,no,data').in('id', rows.map(r => r.id)));
+      applied.salesAdd = saved.map(this.rowToSale);
+    }
+    if (patch.open) {
+      const ups = [], dels = [];
+      for (const [station_id, data] of Object.entries(patch.open)) data ? ups.push({ station_id, data, updated_at: now }) : dels.push(station_id);
+      if (ups.length) this.check(await sb.from('open_orders').upsert(ups));
+      if (dels.length) this.check(await sb.from('open_orders').delete().in('station_id', dels));
+      applied.open = patch.open;
+    }
+    if (owner && patch.salesDel?.length) {
+      for (let i = 0; i < patch.salesDel.length; i += 200) {
+        this.check(await sb.from('sales').delete().in('id', patch.salesDel.slice(i, i + 200)));
+      }
+      applied.salesDel = patch.salesDel;
+    }
+    if (Object.keys(applied).length) applyRemote(applied);
+  },
+  subscribe() {
+    this.unsubscribe();
+    let first = true;
+    const ch = this.sb.channel('cafe-' + uid());
+    const on = (table, fn) => ch.on('postgres_changes', { event: '*', schema: 'public', table }, p => {
+      try { fn(p); } catch (e) { console.error(e); }
+    });
+    on('open_orders', p => {
+      const id = p.new?.station_id ?? p.old?.station_id;
+      applyRemote({ open: { [id]: p.eventType === 'DELETE' ? null : p.new.data } });
+    });
+    on('sales', p => applyRemote(p.eventType === 'DELETE' ? { salesDel: [p.old.id] } : { salesAdd: [this.rowToSale(p.new)] }));
+    on('config', p => {
+      if (p.eventType === 'DELETE') return;
+      const v = p.new.key === 'settings' ? { ...state.settings, ...p.new.value } : p.new.value;
+      applyRemote({ [p.new.key]: v });
+    });
+    on('chat', p => { if (p.eventType === 'INSERT') onChatMessage(this.rowToMsg(p.new)); });
+    ch.subscribe(status => {
+      if (status === 'SUBSCRIBED') {
+        setSync('ok');
+        // بعد انقطاع: جلب ما فات
+        if (!first) { resync().catch(() => {}); loadChat(); }
+        first = false;
+      } else if (['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(status)) setSync('off');
+    });
+    this.channel = ch;
+  },
+  unsubscribe() { if (this.channel) { this.sb.removeChannel(this.channel); this.channel = null; } },
+  async loadChat() {
+    const rows = this.check(await this.sb.from('chat').select('*').order('id', { ascending: false }).limit(200));
+    return rows.reverse().map(this.rowToMsg);
+  },
+  async sendChat(text) {
+    return this.rowToMsg(this.check(await this.sb.from('chat').insert({ from_role: this.role, text }).select().single()));
+  },
+  async setPassword(role, password) {
+    if (password.length < 6) throw new Error('كلمة المرور يجب أن تكون 6 أحرف على الأقل');
+    if (role === this.role) {
+      const { error } = await this.sb.auth.updateUser({ password });
+      if (error) throw new Error(error.message);
+      return;
+    }
+    const { error } = await this.sb.functions.invoke('set-password', { body: { role, password } });
+    if (error) {
+      let msg = '';
+      try { msg = (await error.context.json()).error; } catch {}
+      throw new Error(msg || 'تعذّر تغيير كلمة المرور. انشر الدالة set-password، أو غيّرها من لوحة Supabase ← Authentication ← Users');
+    }
+  },
+};
 
 /* ================= الدردشة ================= */
 let chatMessages = [], chatOpen = false;
@@ -830,13 +1060,13 @@ function updateChatBadge() {
   $('#chatBadge').hidden = !n;
 }
 async function loadChat() {
-  try { chatMessages = (await api('GET', 'api/chat')).messages; renderChat(); } catch {}
+  try { chatMessages = await backend.loadChat(); renderChat(); } catch (e) { console.warn(e); }
 }
 function renderChat() {
   const box = $('#chatMessages');
-  if (MODE !== 'server') {
-    box.innerHTML = `<div class="chat-note">💡 الدردشة بين صاحب المقهى والمدير تعمل عند تشغيل التطبيق عبر خادم المقهى
-      (<code>node server.js</code>) وفتحه من الهواتف بعنوان الخادم. راجع ملف README.</div>`;
+  if (!isRemote()) {
+    box.innerHTML = `<div class="chat-note">💡 الدردشة بين صاحب المقهى والمدير تعمل عند ربط التطبيق بـ Supabase
+      (ملف <code>config.js</code>) أو تشغيله عبر خادم المقهى (<code>node server.js</code>). راجع ملف README.</div>`;
     $('#chatForm').hidden = true;
     return updateChatBadge();
   }
@@ -874,7 +1104,7 @@ function beep() {
     o.connect(g).connect(ctx.destination); o.start(); o.stop(ctx.currentTime + 0.3);
   } catch {}
 }
-function openChat() { chatOpen = true; document.body.classList.add('chat-open'); renderChat(); markRead(); if (MODE === 'server' && !matchMedia('(max-width: 700px)').matches) $('#chatInput').focus(); }
+function openChat() { chatOpen = true; document.body.classList.add('chat-open'); renderChat(); markRead(); if (isRemote() && !matchMedia('(max-width: 700px)').matches) $('#chatInput').focus(); }
 function closeChat() { chatOpen = false; document.body.classList.remove('chat-open'); updateChatBadge(); }
 $('#chatFab').addEventListener('click', () => chatOpen ? closeChat() : openChat());
 $('#chatClose').addEventListener('click', closeChat);
@@ -883,7 +1113,7 @@ $('#chatForm').addEventListener('submit', async e => {
   const input = $('#chatInput'), text = input.value.trim();
   if (!text) return;
   input.value = ''; autoGrow();
-  try { onChatMessage(await api('POST', 'api/chat', { text })); }
+  try { onChatMessage(await backend.sendChat(text)); }
   catch (err) { input.value = text; toast('لم تُرسل الرسالة: ' + err.message); }
   input.focus();
 });
@@ -932,19 +1162,13 @@ window.addEventListener('storage', e => {
 });
 
 (async function init() {
-  if (location.protocol.startsWith('http')) {
-    try {
-      const r = await fetch('api/ping', { cache: 'no-store' });
-      if (r.ok) { serverInfo = await r.json(); MODE = 'server'; }
-    } catch {}
-  }
+  if (SupabaseBackend.detect()) { MODE = 'supabase'; backend = SupabaseBackend; }
+  else if (await NodeBackend.detect()) { MODE = 'server'; backend = NodeBackend; }
   document.body.classList.add('mode-' + MODE);
   tick();
-  if (MODE === 'server') {
-    try { token = localStorage.getItem(TOKEN_KEY); } catch {}
-    if (token) {
-      try { const d = await resync(true); return enterApp(d.role); } catch { token = null; }
-    }
+  if (backend) {
+    const d = await backend.restore();
+    if (d) { startRemote(d); return enterApp(d.role); }
     return logout();
   }
   let role = null;

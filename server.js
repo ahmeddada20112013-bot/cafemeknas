@@ -125,6 +125,7 @@ function auth(req, url) {
 const STATIC = {
   '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/shared.js': 'shared.js', '/style.css': 'style.css',
   '/manifest.webmanifest': 'manifest.webmanifest', '/sw.js': 'sw.js',
+  '/config.js': 'config.js', '/vendor/supabase-2.118.0.js': 'vendor/supabase-2.118.0.js',
   '/icons/icon.svg': 'icons/icon.svg', '/icons/icon-192.png': 'icons/icon-192.png', '/icons/icon-512.png': 'icons/icon-512.png',
 };
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',

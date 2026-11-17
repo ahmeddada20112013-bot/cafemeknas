@@ -1,7 +1,7 @@
 /* عامل الخدمة: يحفظ ملفات التطبيق ليفتح بسرعة ويُثبّت على الهاتف.
    طلبات /api لا تُخزَّن أبداً (البيانات دائماً من الخادم). */
-const CACHE = 'cafe-meknas-v3';
-const FILES = ['./', 'index.html', 'app.js', 'shared.js', 'style.css', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
+const CACHE = 'cafe-meknas-v4';
+const FILES = ['./', 'index.html', 'config.js', 'vendor/supabase-2.118.0.js', 'app.js', 'shared.js', 'style.css', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));

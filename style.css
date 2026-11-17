@@ -167,7 +167,7 @@ body.role-manager .owner-only { display: none !important; }
 /* ===== شريط التبويبات (أيقونة + نص) ===== */
 .tab i { font-style: normal; margin-inline-end: 4px; }
 .sync-dot { display: none; width: 10px; height: 10px; border-radius: 50%; background: #22c55e; }
-body.mode-server .sync-dot { display: inline-block; }
+body.mode-server .sync-dot, body.mode-supabase .sync-dot { display: inline-block; }
 .sync-dot[data-status=busy] { background: #f59e0b; }
 .sync-dot[data-status=off] { background: #ef4444; animation: blink 1s infinite; }
 @keyframes blink { 50% { opacity: .3; } }
