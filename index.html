@@ -8,7 +8,22 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="locked">
+  <div id="loginScreen">
+    <form id="loginForm" class="login-card">
+      <div class="logo big">☕🎮</div>
+      <h1 id="loginCafe">مقهى مكناس</h1>
+      <p class="muted">تسجيل الدخول</p>
+      <div class="roles">
+        <label class="role"><input type="radio" name="role" value="owner" checked><span>👑<b>صاحب المقهى</b></span></label>
+        <label class="role"><input type="radio" name="role" value="manager"><span>🧾<b>مدير المقهى</b></span></label>
+      </div>
+      <input id="loginPassword" type="password" placeholder="كلمة المرور" autocomplete="current-password" required>
+      <div id="loginError" class="login-error"></div>
+      <button class="btn primary big" type="submit">دخول</button>
+      <p class="muted small" id="loginHint"></p>
+    </form>
+  </div>
   <header class="topbar">
     <div class="brand">
       <span class="logo">☕🎮</span>
@@ -19,8 +34,12 @@
       <button class="tab" data-view="games">🎮 صالة الألعاب</button>
       <button class="tab" data-view="menu">قائمة المنتجات</button>
       <button class="tab" data-view="reports">التقارير</button>
-      <button class="tab" data-view="settings">الإعدادات</button>
+      <button class="tab owner-only" data-view="settings">الإعدادات</button>
     </nav>
+    <div class="userbox">
+      <span id="userName"></span>
+      <button class="btn sm" id="logoutBtn">خروج</button>
+    </div>
     <div class="clock" id="clock"></div>
   </header>
 
@@ -41,7 +60,7 @@
 
     <!-- قائمة المنتجات -->
     <section id="view-menu" class="view">
-      <div class="panel">
+      <div class="panel owner-only">
         <h2>إضافة / تعديل منتج</h2>
         <form id="productForm" class="form-row">
           <input type="hidden" id="productId">
@@ -109,7 +128,10 @@
         <form id="settingsForm" class="form-row">
           <label>اسم المقهى <input id="setName" required></label>
           <label>العملة <input id="setCurrency" required></label>
+          <label>🎮 ثمن الساعة <input id="setHourRate" type="number" step="0.5" min="0" required></label>
+          <label>🎮 ثمن المباراة <input id="setMatchRate" type="number" step="0.5" min="0" required></label>
           <label>تقريب وقت اللعب (دقائق) <input id="setRound" type="number" min="1" required></label>
+          <label>مهلة السماح (دقائق) <input id="setGrace" type="number" min="0" required></label>
           <label>الحد الأدنى للعب (دقائق) <input id="setMin" type="number" min="0" required></label>
           <label class="wide">نص أسفل الفاتورة <input id="setFooter"></label>
           <div class="form-actions"><button class="btn primary" type="submit">حفظ الإعدادات</button></div>
@@ -117,26 +139,14 @@
       </div>
 
       <div class="panel">
-        <h2>الطاولات ومحطات الألعاب</h2>
+        <h2>طاولات المقهى وأجهزة بلاي 4</h2>
         <form id="stationForm" class="form-row">
           <input type="hidden" id="stationId">
-          <label>الاسم <input id="stationName" required placeholder="بلايستيشن 1"></label>
+          <label>الاسم <input id="stationName" required placeholder="بلاي 4 — 5"></label>
           <label>النوع
             <select id="stationType">
               <option value="table">طاولة مقهى</option>
-              <option value="game">محطة ألعاب</option>
-            </select>
-          </label>
-          <label class="game-only">طريقة الاحتساب
-            <select id="stationBilling">
-              <option value="hour">بالساعة</option>
-              <option value="match">بالمباراة / الجولة</option>
-            </select>
-          </label>
-          <label class="game-only">السعر <input id="stationRate" type="number" step="0.5" min="0" value="0"></label>
-          <label class="game-only">الأيقونة
-            <select id="stationIcon">
-              <option>🎮</option><option>🎱</option><option>⚽</option><option>🏓</option><option>🕹️</option><option>🃏</option><option>🥽</option>
+              <option value="game">جهاز بلاي 4</option>
             </select>
           </label>
           <div class="form-actions">
@@ -145,6 +155,21 @@
           </div>
         </form>
         <div id="stationsTable"></div>
+      </div>
+
+      <div class="panel">
+        <h2>كلمات المرور</h2>
+        <form id="passwordForm" class="form-row">
+          <label>الحساب
+            <select id="pwUser">
+              <option value="owner">صاحب المقهى</option>
+              <option value="manager">مدير المقهى</option>
+            </select>
+          </label>
+          <label>كلمة المرور الجديدة <input id="pwNew" type="password" minlength="4" required autocomplete="new-password"></label>
+          <label>تأكيد كلمة المرور <input id="pwConfirm" type="password" minlength="4" required autocomplete="new-password"></label>
+          <div class="form-actions"><button class="btn primary" type="submit">تغيير</button></div>
+        </form>
       </div>
 
       <div class="panel">

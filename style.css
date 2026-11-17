@@ -139,3 +139,27 @@ dialog.small select { width: 100%; margin: 12px 0; }
 .section-title { margin: 0 0 12px; font-size: 1.4rem; }
 .subhead { margin: 16px 0 8px; font-size: 1rem; color: var(--muted); }
 #view-floor.games .section-title { color: var(--game); }
+
+/* تسجيل الدخول */
+body.locked > *:not(#loginScreen):not(#toast) { display: none !important; }
+body:not(.locked) #loginScreen { display: none; }
+#loginScreen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: linear-gradient(135deg, #1f2937, #3b2a1a); }
+.login-card { background: var(--surface); border-radius: 16px; padding: 28px; width: min(400px, 100%); display: flex; flex-direction: column;
+  gap: 12px; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,.35); }
+.login-card h1 { margin: 0; font-size: 1.5rem; }
+.login-card p { margin: 0; }
+.logo.big { font-size: 2.6rem; }
+.roles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.role input { position: absolute; opacity: 0; }
+.role span { display: flex; flex-direction: column; gap: 4px; align-items: center; padding: 14px 8px; border: 2px solid var(--border);
+  border-radius: 12px; cursor: pointer; font-size: 1.6rem; }
+.role span b { font-size: .95rem; }
+.role input:checked + span { border-color: var(--primary); background: var(--surface-2); }
+.role input:focus-visible + span { outline: 2px solid var(--primary); }
+.login-card input[type=password] { padding: 12px; text-align: center; font-size: 1.1rem; }
+.login-error { color: var(--danger); min-height: 1.2em; }
+.small { font-size: .8rem; }
+.userbox { display: flex; align-items: center; gap: 8px; color: #d1d5db; }
+.userbox .btn { background: #374151; color: #fff; border-color: #4b5563; }
+body.role-manager .owner-only { display: none !important; }

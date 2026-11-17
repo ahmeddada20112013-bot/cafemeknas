@@ -4,7 +4,8 @@
 const STORE_KEY = 'cafe-meknas-v1';
 
 const DEFAULT_STATE = () => ({
-  settings: { name: 'مقهى مكناس', currency: 'درهم', round: 15, min: 30, footer: 'شكراً لزيارتكم — نتمنى لكم وقتاً ممتعاً' },
+  version: 2,
+  settings: { name: 'مقهى مكناس', currency: 'درهم', round: 15, min: 30, grace: 2, hourRate: 12, matchRate: 4, footer: 'شكراً لزيارتكم — نتمنى لكم وقتاً ممتعاً' },
   products: [
     ['قهوة سوداء', 'مشروبات ساخنة', 8], ['قهوة نص نص', 'مشروبات ساخنة', 10], ['كابتشينو', 'مشروبات ساخنة', 15],
     ['أتاي بالنعناع', 'مشروبات ساخنة', 8], ['شوكولا ساخنة', 'مشروبات ساخنة', 15],
@@ -14,28 +15,44 @@ const DEFAULT_STATE = () => ({
     ['شيبس', 'وجبات خفيفة', 5], ['شوكولاتة', 'وجبات خفيفة', 6],
   ].map(([name, category, price]) => ({ id: uid(), name, category, price })),
   stations: [
-    ...[1, 2, 3, 4, 5, 6].map(n => ({ id: uid(), name: `طاولة ${n}`, type: 'table', billing: 'hour', rate: 0, icon: '☕' })),
-    { id: uid(), name: 'سفري', type: 'table', billing: 'hour', rate: 0, icon: '🥡' },
-    ...[1, 2, 3, 4].map(n => ({ id: uid(), name: `بلايستيشن ${n}`, type: 'game', billing: 'hour', rate: 20, icon: '🎮' })),
-    { id: uid(), name: 'بلياردو 1', type: 'game', billing: 'hour', rate: 30, icon: '🎱' },
-    { id: uid(), name: 'بلياردو 2', type: 'game', billing: 'hour', rate: 30, icon: '🎱' },
-    { id: uid(), name: 'بيبي فوت', type: 'game', billing: 'match', rate: 5, icon: '⚽' },
-    { id: uid(), name: 'تنس الطاولة', type: 'game', billing: 'hour', rate: 15, icon: '🏓' },
+    ...[1, 2, 3, 4, 5, 6].map(n => ({ id: uid(), name: `طاولة ${n}`, type: 'table', icon: '☕' })),
+    { id: uid(), name: 'سفري', type: 'table', icon: '🥡' },
+    ...ps4Stations(4),
   ],
+  users: {
+    owner: { title: 'صاحب المقهى', hash: null },
+    manager: { title: 'مدير المقهى', hash: null },
+  },
   open: {},
   sales: [],
   seq: 1,
 });
 
+function ps4Stations(n) {
+  return Array.from({ length: n }, (_, i) => ({ id: uid(), name: `بلاي 4 — ${i + 1}`, type: 'game', icon: '🎮' }));
+}
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
 let state = load();
 function load() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return Object.assign(DEFAULT_STATE(), JSON.parse(raw));
+    if (raw) return migrate(Object.assign(DEFAULT_STATE(), JSON.parse(raw)));
   } catch (e) { console.warn(e); }
   return DEFAULT_STATE();
+}
+// ترقية البيانات القديمة: صالة الألعاب أصبحت بلاي 4 فقط بثمن موحد (ساعة / مباراة)
+function migrate(st) {
+  const def = DEFAULT_STATE();
+  st.settings = Object.assign({}, def.settings, st.settings);
+  st.users = Object.assign({}, def.users, st.users);
+  if ((st.version || 1) < 2) {
+    const oldGames = st.stations.filter(s => s.type === 'game');
+    oldGames.forEach(s => delete st.open[s.id]);
+    st.stations = [...st.stations.filter(s => s.type !== 'game'), ...ps4Stations(4)];
+    st.version = 2;
+  }
+  return st;
 }
 function save() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
@@ -65,7 +82,7 @@ const saleSection = s => s.stationType || (s.game ? 'game' : 'table');
 /* ================= منطق الطلب والأثمنة ================= */
 function getOrder(stationId, create = false) {
   if (!state.open[stationId] && create) {
-    state.open[stationId] = { openedAt: Date.now(), items: [], game: { running: false, segStart: 0, accMs: 0, matches: 0 }, discount: 0, payment: 'cash' };
+    state.open[stationId] = { openedAt: Date.now(), items: [], game: { mode: 'hour', running: false, segStart: 0, accMs: 0, matches: 0 }, discount: 0, payment: 'cash' };
   }
   return state.open[stationId];
 }
@@ -77,15 +94,27 @@ function playedMs(o) {
 function billableMinutes(ms) {
   const mins = ms / 60000;
   if (mins <= 0) return 0;
-  const { round, min } = state.settings;
-  const rounded = Math.ceil(mins / Math.max(1, round)) * Math.max(1, round);
+  const { round, min, grace } = state.settings;
+  const r = Math.max(1, round);
+  // مهلة السماح: دقائق قليلة بعد نهاية الفترة لا تُحتسب فترة جديدة
+  const rounded = Math.max(r, Math.ceil(Math.max(0, mins - (Number(grace) || 0)) / r) * r);
   return Math.max(Number(min) || 0, rounded);
 }
+const gameMode = o => o?.game.mode || 'hour';
 function gameCost(station, o) {
   if (!o || station.type !== 'game') return 0;
-  if (station.billing === 'match') return r2(o.game.matches * station.rate);
-  return r2(billableMinutes(playedMs(o)) / 60 * station.rate);
+  if (gameMode(o) === 'match') return r2(o.game.matches * state.settings.matchRate);
+  return r2(billableMinutes(playedMs(o)) / 60 * state.settings.hourRate);
 }
+function gameRecord(o, cost) {
+  const ms = playedMs(o), mode = gameMode(o);
+  return {
+    mode, playedMs: mode === 'hour' ? ms : 0, billedMinutes: mode === 'hour' ? billableMinutes(ms) : 0,
+    matches: mode === 'match' ? o.game.matches : 0,
+    rate: mode === 'hour' ? state.settings.hourRate : state.settings.matchRate, cost,
+  };
+}
+const ratesBadge = () => `<span class="badge">${money(state.settings.hourRate)} / ساعة</span> <span class="badge">${money(state.settings.matchRate)} / مباراة</span>`;
 function itemsTotal(o) { return o ? r2(o.items.reduce((s, i) => s + i.price * i.qty, 0)) : 0; }
 function orderTotals(station, o) {
   const items = itemsTotal(o), game = gameCost(station, o);
@@ -100,6 +129,7 @@ function isEmptyOrder(o) {
 /* ================= التنقل ================= */
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
 function showView(v) {
+  if (v === 'settings' && !isOwner()) v = 'cafe';
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.view === v));
   document.querySelectorAll('.view').forEach(s => s.classList.toggle('active', s.id === 'view-' + v));
   if (v === 'cafe' || v === 'games') {
@@ -146,11 +176,11 @@ function stationCard(s) {
   const t = o ? orderTotals(s, o) : null;
   let timer = '';
   if (o && s.type === 'game') {
-    timer = s.billing === 'match'
-      ? `<div class="s-timer">${o.game.matches} جولة</div>`
+    timer = gameMode(o) === 'match'
+      ? `<div class="s-timer">${o.game.matches} مباراة</div>`
       : `<div class="s-timer ${o.game.running ? '' : 'paused'}" data-timer="${s.id}">${fmtDur(playedMs(o))}${o.game.running ? '' : ' ⏸'}</div>`;
   }
-  const rate = s.type === 'game' ? `<span class="badge">${money(s.rate)} / ${s.billing === 'match' ? 'جولة' : 'ساعة'}</span>` : '';
+  const rate = s.type === 'game' && !o ? ratesBadge() : '';
   return `<button class="station ${s.type} ${o ? 'busy' : ''}" data-id="${s.id}">
     <div class="s-head"><span>${esc(s.name)}</span><span class="s-icon">${esc(s.icon || '☕')}</span></div>
     <div class="s-status">${o ? 'مشغولة منذ ' + new Date(o.openedAt).toLocaleTimeString('ar-MA', { hour: '2-digit', minute: '2-digit' }) : 'متاحة'} ${rate}</div>
@@ -213,20 +243,22 @@ function renderOrderSide() {
 
   // صندوق اللعب
   if (s.type === 'game') {
-    const g = o?.game;
-    if (s.billing === 'match') {
-      $('#gameBox').innerHTML = `
-        <div><b>${esc(s.icon)} اللعب بالجولة</b> — ${money(s.rate)} للجولة</div>
-        <div class="timer">${g ? g.matches : 0} جولة</div>
+    const g = o?.game, mode = gameMode(o), st = state.settings;
+    const modeChips = `<div class="row">
+      <button class="chip ${mode === 'hour' ? 'active' : ''}" data-g="mode-hour">⏱ بالساعة — ${money(st.hourRate)}</button>
+      <button class="chip ${mode === 'match' ? 'active' : ''}" data-g="mode-match">⚽ بالمباراة — ${money(st.matchRate)}</button>
+    </div>`;
+    if (mode === 'match') {
+      $('#gameBox').innerHTML = `${modeChips}
+        <div class="timer">${g ? g.matches : 0} مباراة</div>
+        <div class="muted" style="text-align:center">${g?.matches || 0} × ${money(st.matchRate)} = ${money(gameCost(s, o))}</div>
         <div class="row">
-          <button class="btn" data-g="match-">− جولة</button>
-          <button class="btn primary" data-g="match+">+ جولة</button>
+          <button class="btn" data-g="match-">− مباراة</button>
+          <button class="btn primary" data-g="match+">+ مباراة</button>
         </div>`;
     } else {
-      const ms = playedMs(o);
-      $('#gameBox').innerHTML = `
-        <div><b>${esc(s.icon)} وقت اللعب</b> — ${money(s.rate)} / ساعة</div>
-        <div class="timer" id="dlgTimer">${fmtDur(ms)}</div>
+      $('#gameBox').innerHTML = `${modeChips}
+        <div class="timer" id="dlgTimer">${fmtDur(playedMs(o))}</div>
         <div class="muted" id="dlgBill" style="text-align:center">${billInfo(s, o)}</div>
         <div class="row">
           ${!g || (!g.running && g.accMs === 0)
@@ -285,6 +317,14 @@ $('#gameBox').addEventListener('click', e => {
     case 'reset':
       if (!confirm('تصفير وقت اللعب؟')) return;
       g.running = false; g.accMs = 0; g.segStart = 0; break;
+    case 'mode-hour': case 'mode-match': {
+      const m = b.dataset.g.slice(5);
+      if (gameMode(o) === m) return;
+      const hasData = g.running || g.accMs > 0 || g.matches > 0;
+      if (hasData && !confirm('تغيير طريقة الاحتساب سيُصفّر الوقت / المباريات. متابعة؟')) return;
+      Object.assign(g, { mode: m, running: false, segStart: 0, accMs: 0, matches: 0 });
+      break;
+    }
     case 'match+': g.matches++; break;
     case 'match-': g.matches = Math.max(0, g.matches - 1); break;
   }
@@ -306,16 +346,13 @@ $('#orderCheckoutBtn').addEventListener('click', () => {
   if (isEmptyOrder(o)) return toast('الطلب فارغ');
   const t = orderTotals(s, o);
   if (!confirm(`إنهاء الطلب ودفع ${r2(t.total)} ${state.settings.currency}؟`)) return;
-  const ms = playedMs(o);
   const sale = {
     id: uid(), no: state.seq++, stationId: s.id, stationName: s.name, stationType: s.type,
     openedAt: o.openedAt, closedAt: Date.now(),
     items: o.items.map(i => ({ ...i })),
-    game: s.type === 'game' ? {
-      billing: s.billing, rate: s.rate, playedMs: ms, billedMinutes: s.billing === 'hour' ? billableMinutes(ms) : 0,
-      matches: o.game.matches, cost: t.game,
-    } : null,
+    game: s.type === 'game' ? gameRecord(o, t.game) : null,
     itemsTotal: t.items, gameTotal: t.game, discount: t.discount, total: t.total, payment: o.payment,
+    by: currentUser ? state.users[currentUser].title : '',
   };
   state.sales.push(sale);
   delete state.open[current];
@@ -328,10 +365,10 @@ $('#orderCheckoutBtn').addEventListener('click', () => {
 $('#orderPrintBtn').addEventListener('click', () => {
   const s = stationById(current), o = state.open[current];
   if (isEmptyOrder(o)) return toast('الطلب فارغ');
-  const t = orderTotals(s, o), ms = playedMs(o);
+  const t = orderTotals(s, o);
   printReceipt({
     no: '—', stationName: s.name, closedAt: Date.now(), items: o.items,
-    game: s.type === 'game' ? { billing: s.billing, rate: s.rate, playedMs: ms, billedMinutes: billableMinutes(ms), matches: o.game.matches, cost: t.game } : null,
+    game: s.type === 'game' ? gameRecord(o, t.game) : null,
     itemsTotal: t.items, gameTotal: t.game, discount: t.discount, total: t.total, payment: o.payment, draft: true,
   });
 });
@@ -354,7 +391,7 @@ $('#moveConfirm').addEventListener('click', () => {
   if (from.type === 'game' && to.type !== 'game') {
     const cost = gameCost(from, o);
     if (cost > 0) o.items.push({ pid: null, name: `لعب: ${from.name}`, price: cost, qty: 1 });
-    o.game = { running: false, segStart: 0, accMs: 0, matches: 0 };
+    o.game = { mode: 'hour', running: false, segStart: 0, accMs: 0, matches: 0 };
   }
   state.open[target] = o; delete state.open[current];
   save(); $('#moveDialog').close();
@@ -368,8 +405,8 @@ function receiptHtml(sale) {
   const rows = sale.items.map(i => `<tr><td>${esc(i.name)}</td><td>${i.qty}×${r2(i.price)}</td><td class="num">${r2(i.price * i.qty).toFixed(2)}</td></tr>`).join('');
   let game = '';
   if (sale.game) {
-    game = sale.game.billing === 'match'
-      ? `<tr><td>لعب (${sale.game.matches} جولة)</td><td>${sale.game.matches}×${r2(sale.game.rate)}</td><td class="num">${r2(sale.game.cost).toFixed(2)}</td></tr>`
+    game = (sale.game.mode || sale.game.billing) === 'match'
+      ? `<tr><td>لعب (${sale.game.matches} مباراة)</td><td>${sale.game.matches}×${r2(sale.game.rate)}</td><td class="num">${r2(sale.game.cost).toFixed(2)}</td></tr>`
       : `<tr><td>لعب ${fmtDur(sale.game.playedMs)}</td><td>${sale.game.billedMinutes} د</td><td class="num">${r2(sale.game.cost).toFixed(2)}</td></tr>`;
   }
   return `<div class="receipt">
@@ -380,6 +417,7 @@ function receiptHtml(sale) {
     ${sale.discount ? `<div>التخفيض: −${r2(sale.discount).toFixed(2)}</div>` : ''}
     <div class="tot">المجموع: ${money(sale.total)}</div>
     <div>الدفع: ${sale.payment === 'card' ? 'بطاقة' : 'نقداً'}</div>
+    ${sale.by ? `<div>بواسطة: ${esc(sale.by)}</div>` : ''}
     <p class="c">${esc(st.footer)}</p>
   </div>`;
 }
@@ -399,12 +437,13 @@ function renderProducts() {
     <thead><tr><th>المنتج</th><th>الصنف</th><th class="num">السعر</th><th></th></tr></thead>
     <tbody>${list.map(p => `<tr>
       <td>${esc(p.name)}</td><td>${esc(p.category)}</td><td class="num">${money(p.price)}</td>
-      <td class="num"><button class="btn sm" data-edit="${p.id}">تعديل</button> <button class="btn sm danger" data-del="${p.id}">حذف</button></td>
+      <td class="num"><span class="owner-only"><button class="btn sm" data-edit="${p.id}">تعديل</button> <button class="btn sm danger" data-del="${p.id}">حذف</button></span></td>
     </tr>`).join('')}</tbody></table></div>` : '<div class="empty">لا توجد منتجات</div>';
 }
 $('#productSearch').addEventListener('input', renderProducts);
 $('#productForm').addEventListener('submit', e => {
   e.preventDefault();
+  if (!isOwner()) return;
   const id = $('#productId').value;
   const data = { name: $('#productName').value.trim(), category: $('#productCategory').value.trim(), price: r2($('#productPrice').value) };
   if (id) Object.assign(state.products.find(p => p.id === id), data);
@@ -419,7 +458,7 @@ $('#productsTable').addEventListener('click', e => {
     const p = state.products.find(x => x.id === ed.dataset.edit);
     $('#productId').value = p.id; $('#productName').value = p.name; $('#productCategory').value = p.category; $('#productPrice').value = p.price;
     $('#productName').focus();
-  } else if (del && confirm('حذف هذا المنتج؟')) {
+  } else if (del && isOwner() && confirm('حذف هذا المنتج؟')) {
     state.products = state.products.filter(p => p.id !== del.dataset.del); save(); renderProducts();
   }
 });
@@ -473,23 +512,23 @@ function renderReports() {
 
   const games = Object.entries(d.games).sort((a, b) => b[1].total - a[1].total);
   $('#reportGames').innerHTML = games.length ? `<table><thead><tr><th>المحطة</th><th class="num">جلسات</th><th class="num">وقت اللعب / الجولات</th><th class="num">المداخيل</th></tr></thead><tbody>
-    ${games.map(([n, v]) => `<tr><td>${esc(n)}</td><td class="num">${v.n}</td><td class="num">${v.ms ? fmtDur(v.ms) : ''}${v.matches ? ` ${v.matches} جولة` : ''}</td><td class="num">${money(v.total)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">لا توجد بيانات</div>';
+    ${games.map(([n, v]) => `<tr><td>${esc(n)}</td><td class="num">${v.n}</td><td class="num">${v.ms ? fmtDur(v.ms) : ''}${v.matches ? ` ${v.matches} مباراة` : ''}</td><td class="num">${money(v.total)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">لا توجد بيانات</div>';
 
   const list = [...d.sales].reverse();
   $('#reportSales').innerHTML = list.length ? `<div class="table-wrap"><table><thead><tr>
-    <th>رقم</th><th>التاريخ</th><th>القسم</th><th>الطاولة / المحطة</th><th class="num">منتجات</th><th class="num">لعب</th><th class="num">تخفيض</th><th class="num">المجموع</th><th>الدفع</th><th></th>
+    <th>رقم</th><th>التاريخ</th><th>القسم</th><th>الطاولة / المحطة</th><th class="num">منتجات</th><th class="num">لعب</th><th class="num">تخفيض</th><th class="num">المجموع</th><th>الدفع</th><th>بواسطة</th><th></th>
     </tr></thead><tbody>${list.map(s => `<tr>
       <td>${s.no}</td><td>${fmtDate(s.closedAt)}</td><td>${saleSection(s) === 'game' ? '🎮 الألعاب' : '☕ المقهى'}</td><td>${esc(s.stationName)}</td>
       <td class="num">${money(s.itemsTotal)}</td><td class="num">${s.gameTotal ? money(s.gameTotal) : '—'}</td>
       <td class="num">${s.discount ? money(s.discount) : '—'}</td><td class="num"><b>${money(s.total)}</b></td>
-      <td>${s.payment === 'card' ? 'بطاقة' : 'نقداً'}</td>
-      <td class="num"><button class="btn sm" data-reprint="${s.id}">طباعة</button> <button class="btn sm danger" data-delsale="${s.id}">حذف</button></td>
+      <td>${s.payment === 'card' ? 'بطاقة' : 'نقداً'}</td><td>${esc(s.by || '')}</td>
+      <td class="num"><button class="btn sm" data-reprint="${s.id}">طباعة</button> <button class="btn sm danger owner-only" data-delsale="${s.id}">حذف</button></td>
     </tr>`).join('')}</tbody></table></div>` : '<div class="empty">لا توجد فواتير في هذه الفترة</div>';
 }
 $('#reportSales').addEventListener('click', e => {
   const rp = e.target.closest('[data-reprint]'), del = e.target.closest('[data-delsale]');
   if (rp) printReceipt(state.sales.find(s => s.id === rp.dataset.reprint));
-  if (del && confirm('حذف هذه الفاتورة من السجل؟')) {
+  if (del && isOwner() && confirm('حذف هذه الفاتورة من السجل؟')) {
     state.sales = state.sales.filter(s => s.id !== del.dataset.delsale); save(); renderReports();
   }
 });
@@ -526,50 +565,44 @@ function download(name, content, type) {
 function renderSettings() {
   const st = state.settings;
   $('#setName').value = st.name; $('#setCurrency').value = st.currency;
-  $('#setRound').value = st.round; $('#setMin').value = st.min; $('#setFooter').value = st.footer;
-  toggleGameFields();
+  $('#setHourRate').value = st.hourRate; $('#setMatchRate').value = st.matchRate;
+  $('#setRound').value = st.round; $('#setGrace').value = st.grace; $('#setMin').value = st.min; $('#setFooter').value = st.footer;
   const group = (type, title) => {
     const list = state.stations.filter(s => s.type === type);
     return `<h3 class="subhead">${title} (${list.length})</h3>` + (list.length ? `<div class="table-wrap"><table>
     <thead><tr><th></th><th>الاسم</th>${type === 'game' ? '<th class="num">السعر</th>' : ''}<th></th></tr></thead>
     <tbody>${list.map((s, i) => `<tr>
       <td>${esc(s.icon)}</td><td>${esc(s.name)}</td>
-      ${type === 'game' ? `<td class="num">${money(s.rate)} / ${s.billing === 'match' ? 'جولة' : 'ساعة'}</td>` : ''}
+      ${type === 'game' ? `<td class="num">${ratesBadge()}</td>` : ''}
       <td class="num">
         <button class="btn sm" data-up="${s.id}" ${i === 0 ? 'disabled' : ''}>▲</button>
         <button class="btn sm" data-sedit="${s.id}">تعديل</button>
         <button class="btn sm danger" data-sdel="${s.id}">حذف</button>
       </td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">لا يوجد</div>');
   };
-  $('#stationsTable').innerHTML = group('table', '☕ طاولات المقهى') + group('game', '🎮 محطات صالة الألعاب');
+  $('#stationsTable').innerHTML = group('table', '☕ طاولات المقهى') + group('game', '🎮 أجهزة بلاي 4');
 }
 $('#settingsForm').addEventListener('submit', e => {
   e.preventDefault();
   Object.assign(state.settings, {
     name: $('#setName').value.trim(), currency: $('#setCurrency').value.trim(),
-    round: Math.max(1, +$('#setRound').value || 1), min: Math.max(0, +$('#setMin').value || 0), footer: $('#setFooter').value,
+    hourRate: r2(Math.max(0, +$('#setHourRate').value)), matchRate: r2(Math.max(0, +$('#setMatchRate').value)),
+    round: Math.max(1, +$('#setRound').value || 1), grace: Math.max(0, +$('#setGrace').value || 0), min: Math.max(0, +$('#setMin').value || 0), footer: $('#setFooter').value,
   });
   save(); renderSettings(); $('#cafeName').textContent = state.settings.name; toast('تم حفظ الإعدادات');
 });
-function toggleGameFields() {
-  const g = $('#stationType').value === 'game';
-  document.querySelectorAll('.game-only').forEach(el => el.style.display = g ? '' : 'none');
-}
-$('#stationType').addEventListener('change', toggleGameFields);
-function resetStationForm() { $('#stationForm').reset(); $('#stationId').value = ''; toggleGameFields(); }
+function resetStationForm() { $('#stationForm').reset(); $('#stationId').value = ''; }
 $('#stationCancel').addEventListener('click', resetStationForm);
 $('#stationForm').addEventListener('submit', e => {
   e.preventDefault();
   const id = $('#stationId').value, type = $('#stationType').value;
   const data = {
     name: $('#stationName').value.trim(), type,
-    billing: type === 'game' ? $('#stationBilling').value : 'hour',
-    rate: type === 'game' ? r2($('#stationRate').value) : 0,
-    icon: type === 'game' ? $('#stationIcon').value : '☕',
+    icon: type === 'game' ? '🎮' : '☕',
   };
   if (id) {
     const s = stationById(id);
-    if (state.open[id] && (s.type !== data.type || s.billing !== data.billing)) return toast('لا يمكن تغيير النوع أثناء وجود طلب مفتوح');
+    if (state.open[id] && s.type !== data.type) return toast('لا يمكن تغيير النوع أثناء وجود طلب مفتوح');
     if (s.icon === '🥡' && data.type === 'table') data.icon = s.icon;
     Object.assign(s, data);
   } else state.stations.push({ id: uid(), ...data });
@@ -580,9 +613,7 @@ $('#stationsTable').addEventListener('click', e => {
   if (ed) {
     const s = stationById(ed.dataset.sedit);
     $('#stationId').value = s.id; $('#stationName').value = s.name; $('#stationType').value = s.type;
-    $('#stationBilling').value = s.billing; $('#stationRate').value = s.rate;
-    if (s.type === 'game') $('#stationIcon').value = s.icon;
-    toggleGameFields(); $('#stationName').focus();
+    $('#stationName').focus();
   } else if (del) {
     if (state.open[del.dataset.sdel]) return toast('توجد طلبية مفتوحة على هذه الطاولة');
     if (!confirm('حذف هذه الطاولة / المحطة؟')) return;
@@ -602,13 +633,82 @@ $('#backupImport').addEventListener('change', async e => {
     const data = JSON.parse(await f.text());
     if (!Array.isArray(data.products) || !Array.isArray(data.stations)) throw new Error('bad');
     if (!confirm('سيتم استبدال كل البيانات الحالية. متابعة؟')) return;
-    state = Object.assign(DEFAULT_STATE(), data); save(); renderSettings(); toast('تم الاستيراد');
+    const keepUsers = state.users;
+    state = migrate(Object.assign(DEFAULT_STATE(), data));
+    if (!data.users) state.users = keepUsers;
+    save(); renderSettings(); toast('تم الاستيراد');
   } catch { toast('ملف غير صالح'); }
   e.target.value = '';
 });
 $('#clearSales').addEventListener('click', () => {
   if (!confirm('سيتم حذف كل الفواتير المسجلة. هل أنت متأكد؟')) return;
   state.sales = []; state.seq = 1; save(); toast('تم حذف سجل المبيعات');
+});
+
+/* ================= تسجيل الدخول ================= */
+// ملاحظة: الحماية هنا محلية (داخل المتصفح) وتمنع الاستعمال غير المأذون للتطبيق على جهاز المقهى.
+const SESSION_KEY = 'cafe-meknas-session';
+const DEFAULT_PASSWORDS = { owner: '1234', manager: '0000' };
+let currentUser = null;
+const isOwner = () => currentUser === 'owner';
+
+async function hashPassword(role, pw) {
+  const text = `cafe-meknas|${role}|${pw}`;
+  if (window.crypto?.subtle) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  let h = 5381; for (const ch of text) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0;
+  return 'x' + h.toString(16);
+}
+async function checkPassword(role, pw) {
+  const u = state.users[role];
+  if (!u) return false;
+  if (!u.hash) return pw === DEFAULT_PASSWORDS[role];
+  return (await hashPassword(role, pw)) === u.hash;
+}
+function updateLoginHint() {
+  const role = document.querySelector('input[name=role]:checked').value;
+  $('#loginHint').textContent = state.users[role]?.hash ? '' :
+    `كلمة المرور الافتراضية: ${DEFAULT_PASSWORDS[role]} — غيّرها من الإعدادات بعد الدخول`;
+}
+document.querySelectorAll('input[name=role]').forEach(r => r.addEventListener('change', () => { updateLoginHint(); $('#loginPassword').focus(); }));
+$('#loginForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const role = document.querySelector('input[name=role]:checked').value;
+  if (await checkPassword(role, $('#loginPassword').value)) {
+    try { sessionStorage.setItem(SESSION_KEY, role); } catch {}
+    enterApp(role);
+  } else {
+    $('#loginError').textContent = 'كلمة المرور غير صحيحة';
+    $('#loginPassword').select();
+  }
+});
+function enterApp(role) {
+  currentUser = role;
+  $('#loginPassword').value = ''; $('#loginError').textContent = '';
+  document.body.classList.remove('locked', 'role-owner', 'role-manager');
+  document.body.classList.add('role-' + role);
+  $('#userName').textContent = (role === 'owner' ? '👑 ' : '🧾 ') + state.users[role].title;
+  showView('cafe');
+}
+function logout() {
+  if (dlg.open) closeOrder();
+  currentUser = null;
+  try { sessionStorage.removeItem(SESSION_KEY); } catch {}
+  document.body.classList.add('locked');
+  $('#loginCafe').textContent = state.settings.name;
+  updateLoginHint();
+  $('#loginPassword').focus();
+}
+$('#logoutBtn').addEventListener('click', logout);
+$('#passwordForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  if (!isOwner()) return;
+  const role = $('#pwUser').value, pw = $('#pwNew').value;
+  if (pw !== $('#pwConfirm').value) return toast('كلمتا المرور غير متطابقتين');
+  state.users[role].hash = await hashPassword(role, pw);
+  save(); $('#passwordForm').reset(); toast(`تم تغيير كلمة مرور ${state.users[role].title}`);
 });
 
 /* ================= التحديث الدوري ================= */
@@ -636,5 +736,9 @@ setInterval(tick, 1000);
 
 window.addEventListener('storage', e => { if (e.key === STORE_KEY) { state = load(); if (!dlg.open) renderFloor(); } });
 
-renderFloor();
-tick();
+(function init() {
+  let role = null;
+  try { role = sessionStorage.getItem(SESSION_KEY); } catch {}
+  if (role && state.users[role]) enterApp(role); else logout();
+  tick();
+})();
