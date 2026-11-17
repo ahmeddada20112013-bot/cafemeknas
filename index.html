@@ -2,7 +2,13 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="مقهى مكناس">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
   <title>مقهى مكناس — الطلبات والألعاب</title>
   <meta name="theme-color" content="#1f2937">
   <link rel="manifest" href="manifest.webmanifest">
@@ -22,6 +28,7 @@
       <div id="loginError" class="login-error"></div>
       <button class="btn primary big" type="submit">دخول</button>
       <p class="muted small" id="loginHint"></p>
+      <p class="muted small" id="loginMode"></p>
     </form>
   </div>
   <header class="topbar">
@@ -30,13 +37,15 @@
       <span id="cafeName">مقهى مكناس</span>
     </div>
     <nav class="tabs">
-      <button class="tab active" data-view="cafe">☕ المقهى</button>
-      <button class="tab" data-view="games">🎮 صالة الألعاب</button>
-      <button class="tab" data-view="menu">قائمة المنتجات</button>
-      <button class="tab" data-view="reports">التقارير</button>
-      <button class="tab owner-only" data-view="settings">الإعدادات</button>
+      <button class="tab active" data-view="cafe"><i>☕</i><span>المقهى</span></button>
+      <button class="tab" data-view="games"><i>🎮</i><span>صالة الألعاب</span></button>
+      <button class="tab" data-view="menu"><i>📋</i><span>المنتجات</span></button>
+      <button class="tab" data-view="reports"><i>📊</i><span>التقارير</span></button>
+      <button class="tab owner-only" data-view="settings"><i>⚙️</i><span>الإعدادات</span></button>
     </nav>
     <div class="userbox">
+      <span id="syncStatus" class="sync-dot" title=""></span>
+      <button class="btn sm" id="installBtn" hidden>📲 تثبيت</button>
       <span id="userName"></span>
       <button class="btn sm" id="logoutBtn">خروج</button>
     </div>
@@ -186,13 +195,18 @@
 
   <!-- نافذة الطلب -->
   <dialog id="orderDialog">
+    <div class="order-mobile-tabs">
+      <button class="btn" id="mBack">→ رجوع</button>
+      <button class="mtab active" data-pane="menu">المنتجات</button>
+      <button class="mtab" data-pane="side">الطلب <b id="mTotal"></b></button>
+    </div>
     <div class="order-wrap">
       <div class="order-menu">
         <div class="order-head">
           <h2 id="orderTitle"></h2>
           <input id="orderSearch" class="search" placeholder="بحث عن منتج...">
         </div>
-        <div class="filters" id="orderCategories"></div>
+        <div class="filters cats" id="orderCategories"></div>
         <div class="grid products" id="orderProducts"></div>
       </div>
       <aside class="order-side">
@@ -229,8 +243,23 @@
     </div>
   </dialog>
 
+  <!-- الدردشة -->
+  <button id="chatFab" class="chat-fab" aria-label="الدردشة">💬<span id="chatBadge" class="chat-badge" hidden></span></button>
+  <section id="chatPanel" class="chat-panel" aria-label="الدردشة">
+    <header class="chat-head">
+      <div><b>💬 الدردشة</b><div class="muted small" id="chatWith"></div></div>
+      <button class="btn sm" id="chatClose" aria-label="إغلاق">✕</button>
+    </header>
+    <div id="chatMessages" class="chat-messages"></div>
+    <form id="chatForm" class="chat-form">
+      <textarea id="chatInput" rows="1" maxlength="1000" placeholder="اكتب رسالة..."></textarea>
+      <button class="btn primary" type="submit" aria-label="إرسال">إرسال</button>
+    </form>
+  </section>
+
   <div id="printArea"></div>
   <div id="toast"></div>
+  <script src="shared.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -3,36 +3,6 @@
 /* ================= البيانات ================= */
 const STORE_KEY = 'cafe-meknas-v1';
 
-const DEFAULT_STATE = () => ({
-  version: 2,
-  settings: { name: 'مقهى مكناس', currency: 'درهم', round: 15, min: 30, grace: 2, hourRate: 12, matchRate: 4, footer: 'شكراً لزيارتكم — نتمنى لكم وقتاً ممتعاً' },
-  products: [
-    ['قهوة سوداء', 'مشروبات ساخنة', 8], ['قهوة نص نص', 'مشروبات ساخنة', 10], ['كابتشينو', 'مشروبات ساخنة', 15],
-    ['أتاي بالنعناع', 'مشروبات ساخنة', 8], ['شوكولا ساخنة', 'مشروبات ساخنة', 15],
-    ['عصير برتقال', 'عصائر', 15], ['عصير أفوكادو', 'عصائر', 20], ['بانشي', 'عصائر', 20],
-    ['كوكا كولا', 'مشروبات باردة', 10], ['ماء معدني', 'مشروبات باردة', 6], ['هاواي', 'مشروبات باردة', 10],
-    ['كرواسون', 'مأكولات', 6], ['مسمن', 'مأكولات', 6], ['ساندويتش', 'مأكولات', 25], ['بيتزا صغيرة', 'مأكولات', 35],
-    ['شيبس', 'وجبات خفيفة', 5], ['شوكولاتة', 'وجبات خفيفة', 6],
-  ].map(([name, category, price]) => ({ id: uid(), name, category, price })),
-  stations: [
-    ...[1, 2, 3, 4, 5, 6].map(n => ({ id: uid(), name: `طاولة ${n}`, type: 'table', icon: '☕' })),
-    { id: uid(), name: 'سفري', type: 'table', icon: '🥡' },
-    ...ps4Stations(4),
-  ],
-  users: {
-    owner: { title: 'صاحب المقهى', hash: null },
-    manager: { title: 'مدير المقهى', hash: null },
-  },
-  open: {},
-  sales: [],
-  seq: 1,
-});
-
-function ps4Stations(n) {
-  return Array.from({ length: n }, (_, i) => ({ id: uid(), name: `بلاي 4 — ${i + 1}`, type: 'game', icon: '🎮' }));
-}
-function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
-
 let state = load();
 function load() {
   try {
@@ -41,20 +11,8 @@ function load() {
   } catch (e) { console.warn(e); }
   return DEFAULT_STATE();
 }
-// ترقية البيانات القديمة: صالة الألعاب أصبحت بلاي 4 فقط بثمن موحد (ساعة / مباراة)
-function migrate(st) {
-  const def = DEFAULT_STATE();
-  st.settings = Object.assign({}, def.settings, st.settings);
-  st.users = Object.assign({}, def.users, st.users);
-  if ((st.version || 1) < 2) {
-    const oldGames = st.stations.filter(s => s.type === 'game');
-    oldGames.forEach(s => delete st.open[s.id]);
-    st.stations = [...st.stations.filter(s => s.type !== 'game'), ...ps4Stations(4)];
-    st.version = 2;
-  }
-  return st;
-}
 function save() {
+  if (MODE === 'server') return schedulePush();
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
   catch (e) { toast('تعذّر حفظ البيانات في المتصفح!'); }
 }
@@ -202,6 +160,7 @@ function openOrder(stationId) {
   $('#orderSearch').value = '';
   renderOrderMenu();
   renderOrderSide();
+  setOrderPane('menu');
   dlg.showModal();
 }
 function closeOrder() {
@@ -210,6 +169,14 @@ function closeOrder() {
 }
 dlg.addEventListener('cancel', e => { e.preventDefault(); closeOrder(); });
 $('#orderCloseBtn').addEventListener('click', closeOrder);
+$('#mBack').addEventListener('click', closeOrder);
+// على الهاتف: تبديل بين قائمة المنتجات وتفاصيل الطلب
+function setOrderPane(p) {
+  $('.order-wrap').classList.toggle('show-side', p === 'side');
+  document.querySelectorAll('.mtab').forEach(b => b.classList.toggle('active', b.dataset.pane === p));
+  $('.order-wrap').scrollTop = 0; $('.order-menu').scrollTop = 0; $('.order-side').scrollTop = 0;
+}
+document.querySelectorAll('.mtab').forEach(b => b.addEventListener('click', () => setOrderPane(b.dataset.pane)));
 
 function categories() { return [...new Set(state.products.map(p => p.category))]; }
 function renderOrderMenu() {
@@ -298,6 +265,8 @@ function renderTotals() {
     ${s.type === 'game' ? `<div><span>اللعب</span><span>${money(t.game)}</span></div>` : ''}
     ${t.discount ? `<div><span>التخفيض</span><span>− ${money(t.discount)}</span></div>` : ''}
     <div class="grand"><span>المجموع</span><span>${money(t.total)}</span></div>`;
+  const n = o ? o.items.reduce((a, i) => a + i.qty, 0) : 0;
+  $('#mTotal').innerHTML = `${n ? `(${n}) ` : ''}${money(t.total)}`;
 }
 
 $('#orderItems').addEventListener('click', e => {
@@ -341,7 +310,7 @@ $('#orderCancelBtn').addEventListener('click', () => {
   delete state.open[current]; closeOrder(); toast('تم إلغاء الطلب');
 });
 
-$('#orderCheckoutBtn').addEventListener('click', () => {
+$('#orderCheckoutBtn').addEventListener('click', async () => {
   const s = stationById(current), o = state.open[current];
   if (isEmptyOrder(o)) return toast('الطلب فارغ');
   const t = orderTotals(s, o);
@@ -352,14 +321,17 @@ $('#orderCheckoutBtn').addEventListener('click', () => {
     items: o.items.map(i => ({ ...i })),
     game: s.type === 'game' ? gameRecord(o, t.game) : null,
     itemsTotal: t.items, gameTotal: t.game, discount: t.discount, total: t.total, payment: o.payment,
-    by: currentUser ? state.users[currentUser].title : '',
+    by: currentUser ? roleTitle(currentUser) : '',
   };
   state.sales.push(sale);
   delete state.open[current];
   save();
-  printReceipt(sale);
   closeOrder();
-  toast(`تم تسجيل الفاتورة رقم ${sale.no}`);
+  // في وضع الخادم: ننتظر الحفظ ليعطي الخادم رقم الفاتورة النهائي
+  await flushSync();
+  const saved = state.sales.find(x => x.id === sale.id) || sale;
+  printReceipt(saved);
+  toast(`تم تسجيل الفاتورة رقم ${saved.no}`);
 });
 
 $('#orderPrintBtn').addEventListener('click', () => {
@@ -567,6 +539,9 @@ function renderSettings() {
   $('#setName').value = st.name; $('#setCurrency').value = st.currency;
   $('#setHourRate').value = st.hourRate; $('#setMatchRate').value = st.matchRate;
   $('#setRound').value = st.round; $('#setGrace').value = st.grace; $('#setMin').value = st.min; $('#setFooter').value = st.footer;
+  renderStationsTable();
+}
+function renderStationsTable() {
   const group = (type, title) => {
     const list = state.stations.filter(s => s.type === type);
     return `<h3 class="subhead">${title} (${list.length})</h3>` + (list.length ? `<div class="table-wrap"><table>
@@ -635,7 +610,7 @@ $('#backupImport').addEventListener('change', async e => {
     if (!confirm('سيتم استبدال كل البيانات الحالية. متابعة؟')) return;
     const keepUsers = state.users;
     state = migrate(Object.assign(DEFAULT_STATE(), data));
-    if (!data.users) state.users = keepUsers;
+    if (!data.users || MODE === 'server') state.users = keepUsers;
     save(); renderSettings(); toast('تم الاستيراد');
   } catch { toast('ملف غير صالح'); }
   e.target.value = '';
@@ -646,11 +621,16 @@ $('#clearSales').addEventListener('click', () => {
 });
 
 /* ================= تسجيل الدخول ================= */
-// ملاحظة: الحماية هنا محلية (داخل المتصفح) وتمنع الاستعمال غير المأذون للتطبيق على جهاز المقهى.
+// وضعان للتشغيل:
+//  - local : فتح index.html مباشرة — البيانات في هذا المتصفح فقط.
+//  - server: عبر الخادم (node server.js) — كل الأجهزة متزامنة + الدردشة.
 const SESSION_KEY = 'cafe-meknas-session';
+const TOKEN_KEY = 'cafe-meknas-token';
 const DEFAULT_PASSWORDS = { owner: '1234', manager: '0000' };
+let MODE = 'local', serverInfo = null;
 let currentUser = null;
 const isOwner = () => currentUser === 'owner';
+const roleTitle = r => state.users[r]?.title || (r === 'owner' ? 'صاحب المقهى' : 'مدير المقهى');
 
 async function hashPassword(role, pw) {
   const text = `cafe-meknas|${role}|${pw}`;
@@ -661,7 +641,7 @@ async function hashPassword(role, pw) {
   let h = 5381; for (const ch of text) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0;
   return 'x' + h.toString(16);
 }
-async function checkPassword(role, pw) {
+async function checkLocalPassword(role, pw) {
   const u = state.users[role];
   if (!u) return false;
   if (!u.hash) return pw === DEFAULT_PASSWORDS[role];
@@ -669,35 +649,47 @@ async function checkPassword(role, pw) {
 }
 function updateLoginHint() {
   const role = document.querySelector('input[name=role]:checked').value;
-  $('#loginHint').textContent = state.users[role]?.hash ? '' :
-    `كلمة المرور الافتراضية: ${DEFAULT_PASSWORDS[role]} — غيّرها من الإعدادات بعد الدخول`;
+  const has = MODE === 'server' ? serverInfo?.hasPassword?.[role] : !!state.users[role]?.hash;
+  $('#loginHint').textContent = has ? '' : `كلمة المرور الافتراضية: ${DEFAULT_PASSWORDS[role]} — غيّرها من الإعدادات بعد الدخول`;
+  $('#loginMode').textContent = MODE === 'server' ? '🟢 متصل بخادم المقهى — كل الأجهزة متزامنة' : '💻 وضع هذا الجهاز فقط (بدون خادم)';
 }
 document.querySelectorAll('input[name=role]').forEach(r => r.addEventListener('change', () => { updateLoginHint(); $('#loginPassword').focus(); }));
 $('#loginForm').addEventListener('submit', async e => {
   e.preventDefault();
-  const role = document.querySelector('input[name=role]:checked').value;
-  if (await checkPassword(role, $('#loginPassword').value)) {
+  const role = document.querySelector('input[name=role]:checked').value, pw = $('#loginPassword').value;
+  const fail = msg => { $('#loginError').textContent = msg; $('#loginPassword').select(); };
+  if (MODE === 'server') {
+    try {
+      const r = await api('POST', 'api/login', { role, password: pw });
+      token = r.token;
+      try { localStorage.setItem(TOKEN_KEY, token); } catch {}
+      await resync(true);
+      enterApp(r.role);
+    } catch (err) { fail(err.status === 401 || err.status === 429 ? err.message : 'تعذّر الاتصال بالخادم'); }
+  } else if (await checkLocalPassword(role, pw)) {
     try { sessionStorage.setItem(SESSION_KEY, role); } catch {}
     enterApp(role);
-  } else {
-    $('#loginError').textContent = 'كلمة المرور غير صحيحة';
-    $('#loginPassword').select();
-  }
+  } else fail('كلمة المرور غير صحيحة');
 });
 function enterApp(role) {
   currentUser = role;
   $('#loginPassword').value = ''; $('#loginError').textContent = '';
   document.body.classList.remove('locked', 'role-owner', 'role-manager');
   document.body.classList.add('role-' + role);
-  $('#userName').textContent = (role === 'owner' ? '👑 ' : '🧾 ') + state.users[role].title;
+  $('#userName').textContent = (role === 'owner' ? '👑 ' : '🧾 ') + roleTitle(role);
   showView('cafe');
+  if (MODE === 'server') { connectEvents(); loadChat(); }
+  renderChat();
 }
 function logout() {
   if (dlg.open) closeOrder();
-  currentUser = null;
-  try { sessionStorage.removeItem(SESSION_KEY); } catch {}
+  closeChat();
+  if (MODE === 'server' && token) { api('POST', 'api/logout').catch(() => {}); }
+  disconnectEvents();
+  token = null; currentUser = null; chatMessages = [];
+  try { sessionStorage.removeItem(SESSION_KEY); localStorage.removeItem(TOKEN_KEY); } catch {}
   document.body.classList.add('locked');
-  $('#loginCafe').textContent = state.settings.name;
+  $('#loginCafe').textContent = MODE === 'server' ? serverInfo.name : state.settings.name;
   updateLoginHint();
   $('#loginPassword').focus();
 }
@@ -707,9 +699,210 @@ $('#passwordForm').addEventListener('submit', async e => {
   if (!isOwner()) return;
   const role = $('#pwUser').value, pw = $('#pwNew').value;
   if (pw !== $('#pwConfirm').value) return toast('كلمتا المرور غير متطابقتين');
-  state.users[role].hash = await hashPassword(role, pw);
-  save(); $('#passwordForm').reset(); toast(`تم تغيير كلمة مرور ${state.users[role].title}`);
+  if (MODE === 'server') {
+    try { await api('POST', 'api/password', { role, password: pw }); }
+    catch (err) { return toast(err.message); }
+  } else {
+    state.users[role].hash = await hashPassword(role, pw);
+    save();
+  }
+  $('#passwordForm').reset(); toast(`تم تغيير كلمة مرور ${roleTitle(role)}`);
 });
+
+/* ================= المزامنة مع الخادم ================= */
+let token = null, rev = 0, base = null, pushTimer = null, pushing = false, pushAgain = false, es = null;
+async function api(method, url, body) {
+  const r = await fetch(url, {
+    method, cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    if (r.status === 401 && url !== 'api/login' && currentUser) { toast('انتهت الجلسة، سجّل الدخول من جديد'); logout(); }
+    throw Object.assign(new Error(data.error || 'خطأ في الاتصال'), { status: r.status });
+  }
+  return data;
+}
+function setSync(status) {
+  const el = $('#syncStatus');
+  if (!el) return;
+  el.dataset.status = status;
+  el.title = { ok: 'متزامن مع الخادم', busy: 'جارٍ الحفظ...', off: 'غير متصل بالخادم — سيتم الحفظ عند عودة الاتصال' }[status] || '';
+}
+// يطبّق تغييراً وصل من الخادم مع الحفاظ على التعديلات المحلية التي لم تُرسل بعد
+function rebase(updateBase) {
+  const pending = diffState(base, state);
+  updateBase();
+  state = clone(base);
+  if (pending) {
+    if (pending.salesAdd) pending.salesAdd = pending.salesAdd.filter(s => !state.sales.some(x => x.id === s.id));
+    applyPatch(state, pending);
+  }
+}
+function receive(newRev, patch) {
+  if (newRev <= rev) return;
+  if (newRev !== rev + 1) return resync();
+  rebase(() => applyPatch(base, patch));
+  rev = newRev;
+  refreshUI();
+}
+async function resync(initial = false) {
+  const d = await api('GET', 'api/state');
+  const users = d.state.users;
+  if (initial) { base = d.state; state = clone(base); }
+  else rebase(() => { base = d.state; });
+  state.users = users; base.users = users;
+  rev = d.rev;
+  if (!initial) { refreshUI(); schedulePush(); }
+  return d;
+}
+function schedulePush() {
+  if (MODE !== 'server' || !base) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(push, 250);
+}
+async function push() {
+  if (pushing) { pushAgain = true; return; }
+  const patch = diffState(base, state);
+  if (!patch) return setSync('ok');
+  pushing = true; setSync('busy');
+  try {
+    const r = await api('POST', 'api/patch', { patch });
+    if (r.patch) receive(r.rev, r.patch);
+    setSync('ok');
+  } catch (e) {
+    setSync('off');
+    if (e.status !== 401) setTimeout(schedulePush, 3000);
+  } finally {
+    pushing = false;
+    if (pushAgain) { pushAgain = false; schedulePush(); }
+  }
+}
+async function flushSync() {
+  if (MODE !== 'server') return;
+  clearTimeout(pushTimer);
+  while (pushing) await new Promise(r => setTimeout(r, 50));
+  await push();
+}
+function connectEvents() {
+  disconnectEvents();
+  es = new EventSource('api/events?token=' + encodeURIComponent(token));
+  es.addEventListener('hello', e => { setSync('ok'); if (JSON.parse(e.data).rev !== rev) resync().catch(() => {}); });
+  es.addEventListener('patch', e => { const d = JSON.parse(e.data); receive(d.rev, d.patch); });
+  es.addEventListener('users', e => { const u = JSON.parse(e.data); state.users = u; if (base) base.users = u; });
+  es.addEventListener('chat', e => onChatMessage(JSON.parse(e.data)));
+  es.onerror = () => {
+    setSync('off');
+    // التحقق من أن الجلسة ما زالت صالحة (إن لم تكن، api() يُخرج المستخدم)
+    clearTimeout(connectEvents._t);
+    connectEvents._t = setTimeout(() => { if (currentUser) api('GET', 'api/ping').then(() => resync()).catch(() => {}); }, 4000);
+  };
+}
+function disconnectEvents() { if (es) { es.close(); es = null; } }
+// إعادة رسم الواجهة بعد وصول تغييرات من جهاز آخر
+function refreshUI() {
+  if (!currentUser) return;
+  if (dlg.open && current) {
+    if (!stationById(current)) { current = null; dlg.close(); }
+    else if (!state.open[current] && document.activeElement?.id !== 'orderDiscount') renderOrderSide();
+    else if (document.activeElement?.id !== 'orderDiscount') renderOrderSide();
+  }
+  const v = document.querySelector('.tab.active')?.dataset.view;
+  if (v === 'cafe' || v === 'games') renderFloor();
+  else if (v === 'reports') renderReports();
+  else if (v === 'menu') renderProducts();
+  else if (v === 'settings') { $('#stationsTable') && renderStationsTable(); }
+}
+
+/* ================= الدردشة ================= */
+let chatMessages = [], chatOpen = false;
+const LASTREAD_KEY = () => `cafe-meknas-chat-read-${currentUser}`;
+function lastRead() { try { return +localStorage.getItem(LASTREAD_KEY()) || 0; } catch { return 0; } }
+function markRead() {
+  const last = chatMessages[chatMessages.length - 1];
+  if (last) try { localStorage.setItem(LASTREAD_KEY(), last.at); } catch {}
+  updateChatBadge();
+}
+function updateChatBadge() {
+  const n = chatOpen ? 0 : chatMessages.filter(m => m.at > lastRead() && m.from !== currentUser).length;
+  $('#chatBadge').textContent = n > 9 ? '9+' : n;
+  $('#chatBadge').hidden = !n;
+}
+async function loadChat() {
+  try { chatMessages = (await api('GET', 'api/chat')).messages; renderChat(); } catch {}
+}
+function renderChat() {
+  const box = $('#chatMessages');
+  if (MODE !== 'server') {
+    box.innerHTML = `<div class="chat-note">💡 الدردشة بين صاحب المقهى والمدير تعمل عند تشغيل التطبيق عبر خادم المقهى
+      (<code>node server.js</code>) وفتحه من الهواتف بعنوان الخادم. راجع ملف README.</div>`;
+    $('#chatForm').hidden = true;
+    return updateChatBadge();
+  }
+  $('#chatForm').hidden = false;
+  const other = currentUser === 'owner' ? 'manager' : 'owner';
+  $('#chatWith').textContent = (other === 'owner' ? '👑 ' : '🧾 ') + roleTitle(other);
+  let lastDay = '';
+  box.innerHTML = chatMessages.length ? chatMessages.map(m => {
+    const d = dayKey(m.at);
+    const sep = d !== lastDay ? `<div class="chat-day">${new Date(m.at).toLocaleDateString('ar-MA', { weekday: 'long', day: 'numeric', month: 'long' })}</div>` : '';
+    lastDay = d;
+    return `${sep}<div class="msg ${m.from === currentUser ? 'mine' : 'theirs'}">
+      <div class="bubble">${esc(m.text).replace(/\n/g, '<br>')}</div>
+      <div class="meta">${m.from === currentUser ? 'أنت' : esc(roleTitle(m.from))} · ${new Date(m.at).toLocaleTimeString('ar-MA', { hour: '2-digit', minute: '2-digit' })}</div>
+    </div>`;
+  }).join('') : '<div class="chat-note">لا توجد رسائل بعد. اكتب أول رسالة 👋</div>';
+  box.scrollTop = box.scrollHeight;
+  if (chatOpen) markRead(); else updateChatBadge();
+}
+function onChatMessage(m) {
+  if (chatMessages.some(x => x.id === m.id)) return;
+  chatMessages.push(m);
+  renderChat();
+  if (m.from !== currentUser) {
+    if (!chatOpen) toast(`💬 ${roleTitle(m.from)}: ${m.text.slice(0, 60)}`);
+    try { navigator.vibrate?.(200); } catch {}
+    beep();
+  }
+}
+function beep() {
+  try {
+    const ctx = beep.ctx ||= new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = 880; g.gain.setValueAtTime(0.15, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+    o.connect(g).connect(ctx.destination); o.start(); o.stop(ctx.currentTime + 0.3);
+  } catch {}
+}
+function openChat() { chatOpen = true; document.body.classList.add('chat-open'); renderChat(); markRead(); if (MODE === 'server' && !matchMedia('(max-width: 700px)').matches) $('#chatInput').focus(); }
+function closeChat() { chatOpen = false; document.body.classList.remove('chat-open'); updateChatBadge(); }
+$('#chatFab').addEventListener('click', () => chatOpen ? closeChat() : openChat());
+$('#chatClose').addEventListener('click', closeChat);
+$('#chatForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const input = $('#chatInput'), text = input.value.trim();
+  if (!text) return;
+  input.value = ''; autoGrow();
+  try { onChatMessage(await api('POST', 'api/chat', { text })); }
+  catch (err) { input.value = text; toast('لم تُرسل الرسالة: ' + err.message); }
+  input.focus();
+});
+function autoGrow() { const i = $('#chatInput'); i.style.height = 'auto'; i.style.height = Math.min(120, i.scrollHeight) + 'px'; }
+$('#chatInput').addEventListener('input', autoGrow);
+$('#chatInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('#chatForm').requestSubmit(); }
+});
+
+/* ================= تثبيت التطبيق على الهاتف ================= */
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; $('#installBtn').hidden = false; });
+$('#installBtn').addEventListener('click', async () => {
+  if (!installPrompt) return;
+  installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; $('#installBtn').hidden = true;
+});
+if ('serviceWorker' in navigator && window.isSecureContext && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
 
 /* ================= التحديث الدوري ================= */
 function tick() {
@@ -734,11 +927,27 @@ function tick() {
 }
 setInterval(tick, 1000);
 
-window.addEventListener('storage', e => { if (e.key === STORE_KEY) { state = load(); if (!dlg.open) renderFloor(); } });
+window.addEventListener('storage', e => {
+  if (MODE === 'local' && e.key === STORE_KEY) { state = load(); if (currentUser && !dlg.open) refreshUI(); }
+});
 
-(function init() {
+(async function init() {
+  if (location.protocol.startsWith('http')) {
+    try {
+      const r = await fetch('api/ping', { cache: 'no-store' });
+      if (r.ok) { serverInfo = await r.json(); MODE = 'server'; }
+    } catch {}
+  }
+  document.body.classList.add('mode-' + MODE);
+  tick();
+  if (MODE === 'server') {
+    try { token = localStorage.getItem(TOKEN_KEY); } catch {}
+    if (token) {
+      try { const d = await resync(true); return enterApp(d.role); } catch { token = null; }
+    }
+    return logout();
+  }
   let role = null;
   try { role = sessionStorage.getItem(SESSION_KEY); } catch {}
   if (role && state.users[role]) enterApp(role); else logout();
-  tick();
 })();
