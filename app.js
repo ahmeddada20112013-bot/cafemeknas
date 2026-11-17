@@ -996,8 +996,10 @@ const SupabaseBackend = {
     st.users = { owner: { title: 'صاحب المقهى' }, manager: { title: 'مدير المقهى' } };
     staff.forEach(s => { st.users[s.role] = { title: s.title }; });
     const have = new Set(config.map(r => r.key));
-    for (const r of config) st[r.key] = r.key === 'settings' ? { ...st.settings, ...r.value } : r.value;
-    const missing = ['settings', 'products', 'stations'].filter(k => !have.has(k));
+    for (const r of config) st[r.key] = r.key === 'settings' ? { ...st.settings, ...r.value, menuVersion: r.value.menuVersion } : r.value;
+    let missing = ['settings', 'products', 'stations'].filter(k => !have.has(k));
+    // ترقية القائمة التجريبية القديمة إلى قائمة المقهى الحقيقية (صاحب المقهى فقط يحفظها)
+    if (have.has('settings') && me.role === 'owner' && upgradeMenu(st)) missing = [...new Set([...missing, 'settings', 'products'])];
     if (missing.length) {
       // أول تشغيل: صاحب المقهى يحفظ القوائم الافتراضية
       if (me.role !== 'owner') throw Object.assign(new Error('يجب أن يدخل صاحب المقهى أولاً لتهيئة البيانات'), { status: 403 });
