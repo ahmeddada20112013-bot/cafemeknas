@@ -29,8 +29,32 @@
       <button class="btn primary big" type="submit">دخول</button>
       <p class="muted small" id="loginHint"></p>
       <p class="muted small" id="loginMode"></p>
-      <button type="button" class="btn sm" id="diagBtn" hidden>🔍 فحص إعداد Supabase</button>
+      <div class="login-tools">
+        <button type="button" class="btn sm" id="sbConnectBtn" hidden>☁️ ربط بـ Supabase</button>
+        <button type="button" class="btn sm" id="diagBtn" hidden>🔍 فحص إعداد Supabase</button>
+        <button type="button" class="btn sm" id="sbShareBtn" hidden>📲 رابط ربط الهواتف</button>
+        <button type="button" class="btn sm danger" id="sbDisconnectBtn" hidden>قطع الربط</button>
+      </div>
       <ul id="diagResult" class="diag" hidden></ul>
+    </form>
+
+    <form id="sbSetupForm" class="login-card setup-card" hidden>
+      <h2>☁️ ربط التطبيق بـ Supabase</h2>
+      <p class="muted small">من Supabase: <b>Project Settings ← API Keys</b> (أو Data API). يُحفظ الربط في هذا الجهاز،
+        ثم تستطيع إرسال «رابط ربط الهواتف» لباقي الأجهزة.</p>
+      <label>Project URL
+        <input id="sbUrl" type="url" dir="ltr" placeholder="https://xxxxxxxx.supabase.co" required autocomplete="off">
+      </label>
+      <label>مفتاح anon public (أو Publishable key)
+        <textarea id="sbKey" dir="ltr" rows="3" placeholder="eyJhbGciOi... أو sb_publishable_..." required autocomplete="off"></textarea>
+      </label>
+      <label>بريد صاحب المقهى <input id="sbOwnerEmail" type="email" dir="ltr" required></label>
+      <label>بريد المدير <input id="sbManagerEmail" type="email" dir="ltr" required></label>
+      <div id="sbSetupMsg" class="login-error"></div>
+      <div class="form-actions">
+        <button class="btn primary" type="submit">اختبار وحفظ</button>
+        <button class="btn" type="button" id="sbSetupCancel">إلغاء</button>
+      </div>
     </form>
   </div>
   <header class="topbar">

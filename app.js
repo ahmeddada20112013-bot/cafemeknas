@@ -654,9 +654,12 @@ function updateLoginHint() {
   const usesDefault = MODE === 'local' ? !state.users[role]?.hash : MODE === 'server' ? !backend.info?.hasPassword?.[role] : false;
   $('#loginHint').textContent = usesDefault ? `كلمة المرور الافتراضية: ${DEFAULT_PASSWORDS[role]} — غيّرها من الإعدادات بعد الدخول` : '';
   $('#diagBtn').hidden = MODE !== 'supabase';
+  $('#sbShareBtn').hidden = MODE !== 'supabase';
+  $('#sbDisconnectBtn').hidden = !(MODE === 'supabase' && supabaseConfig()?.source === 'device');
+  $('#sbConnectBtn').hidden = MODE !== 'local';
   $('#loginMode').textContent = {
     local: location.protocol === 'https:'
-      ? '⚠️ Supabase غير مفعّل لأن config.js فارغ — البيانات محفوظة في هذا الجهاز فقط'
+      ? '⚠️ غير مربوط بـ Supabase — البيانات محفوظة في هذا الجهاز فقط. اضغط «ربط بـ Supabase»'
       : '💻 وضع هذا الجهاز فقط (بدون خادم)',
     server: '🟢 متصل بخادم المقهى — كل الأجهزة متزامنة',
     supabase: '☁️ عبر Supabase — كل الأجهزة متزامنة عبر الإنترنت',
@@ -886,8 +889,8 @@ const NodeBackend = {
 const SupabaseBackend = {
   info: { name: null }, sb: null, cfg: null, role: null, channel: null,
   detect() {
-    const c = window.CAFE_CONFIG;
-    if (!c?.supabaseUrl || !c?.supabaseAnonKey) return false;
+    const c = supabaseConfig();
+    if (!c) return false;
     if (!window.supabase?.createClient) { console.error('مكتبة Supabase غير محمّلة'); return false; }
     this.cfg = c;
     this.sb = window.supabase.createClient(c.supabaseUrl, c.supabaseAnonKey, {
@@ -1205,6 +1208,96 @@ setInterval(tick, 1000);
 
 window.addEventListener('storage', e => {
   if (MODE === 'local' && e.key === STORE_KEY) { state = load(); if (currentUser && !dlg.open) refreshUI(); }
+});
+
+/* ================= ربط Supabase من داخل التطبيق ================= */
+// الأولوية لـ config.js، وإلا الإعداد المحفوظ في هذا الجهاز (من نموذج الربط أو من رابط الربط)
+const SB_KEY = 'cafe-meknas-supabase';
+const DEFAULT_EMAILS = { owner: 'owner@cafemeknas.ma', manager: 'manager@cafemeknas.ma' };
+function supabaseConfig() {
+  const file = window.CAFE_CONFIG || {};
+  if (file.supabaseUrl && file.supabaseAnonKey) return { ...file, emails: { ...DEFAULT_EMAILS, ...file.emails }, source: 'file' };
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(SB_KEY)); } catch {}
+  if (saved?.supabaseUrl && saved?.supabaseAnonKey) return { ...saved, emails: { ...DEFAULT_EMAILS, ...file.emails, ...saved.emails }, source: 'device' };
+  return null;
+}
+const normalizeUrl = u => u.trim().replace(/\/+$/, '').replace(/\/(rest|auth)\/v1.*$/, '');
+// يرفض المفاتيح السرية التي لا يجب أبداً وضعها في الصفحة
+function checkPublicKey(key) {
+  if (/^sb_secret_/.test(key)) return 'هذا مفتاح سري (secret) — لا تستعمله هنا أبداً. انسخ مفتاح Publishable أو anon public';
+  if (/^eyJ/.test(key)) {
+    try {
+      const p = JSON.parse(atob(key.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      if (p.role === 'service_role') return 'هذا مفتاح service_role السري — لا تستعمله هنا أبداً. انسخ مفتاح anon public';
+      if (p.role !== 'anon') return 'هذا ليس مفتاح anon public';
+    } catch { return 'المفتاح غير مكتمل — انسخه كاملاً'; }
+    return null;
+  }
+  if (/^sb_publishable_/.test(key)) return null;
+  return 'المفتاح غير معروف — انسخ مفتاح anon public أو Publishable key';
+}
+function encodeSetup(c) {
+  return btoa(JSON.stringify({ supabaseUrl: c.supabaseUrl, supabaseAnonKey: c.supabaseAnonKey, emails: c.emails }))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+// فتح «رابط ربط الهواتف»: يحفظ الإعداد في هذا الجهاز ثم يمسحه من شريط العنوان
+(function importSetupLink() {
+  const m = location.hash.match(/[#&]sb=([A-Za-z0-9_-]+)/);
+  if (!m) return;
+  try {
+    const c = JSON.parse(atob(m[1].replace(/-/g, '+').replace(/_/g, '/')));
+    if (/^https?:\/\//.test(c.supabaseUrl) && !checkPublicKey(c.supabaseAnonKey)) {
+      localStorage.setItem(SB_KEY, JSON.stringify({ supabaseUrl: normalizeUrl(c.supabaseUrl), supabaseAnonKey: c.supabaseAnonKey, emails: c.emails }));
+    }
+  } catch {}
+  history.replaceState(null, '', location.pathname + location.search);
+})();
+
+function showSetup(open) {
+  document.body.classList.toggle('setup-open', open);
+  $('#sbSetupForm').hidden = !open;
+  if (open) {
+    const c = supabaseConfig() || {};
+    const emails = { ...DEFAULT_EMAILS, ...(window.CAFE_CONFIG?.emails || {}), ...(c.emails || {}) };
+    $('#sbUrl').value = c.supabaseUrl || ''; $('#sbKey').value = c.supabaseAnonKey || '';
+    $('#sbOwnerEmail').value = emails.owner; $('#sbManagerEmail').value = emails.manager;
+    $('#sbSetupMsg').textContent = '';
+    $('#sbUrl').focus();
+  }
+}
+$('#sbConnectBtn').addEventListener('click', () => showSetup(true));
+$('#sbSetupCancel').addEventListener('click', () => showSetup(false));
+$('#sbSetupForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const msg = t => { $('#sbSetupMsg').textContent = t; };
+  const url = normalizeUrl($('#sbUrl').value), key = $('#sbKey').value.replace(/\s+/g, '');
+  if (!/^https?:\/\/[^\s/]+$/.test(url)) return msg('الرابط غير صحيح. مثال: https://xxxxxxxx.supabase.co');
+  const bad = checkPublicKey(key);
+  if (bad) return msg(bad);
+  msg('⏳ جارٍ اختبار الاتصال...');
+  try {
+    const r = await fetch(url + '/auth/v1/settings', { headers: { apikey: key } });
+    if (r.status === 401) return msg('Supabase رفض المفتاح: تأكّد أنه مفتاح هذا المشروع ونسخته كاملاً');
+    if (!r.ok) return msg(`Supabase أجاب بخطأ ${r.status}. تأكّد من Project URL`);
+  } catch { return msg('تعذّر الوصول إلى هذا الرابط. تأكّد من Project URL ومن الإنترنت'); }
+  const cfg = { supabaseUrl: url, supabaseAnonKey: key, emails: { owner: $('#sbOwnerEmail').value.trim(), manager: $('#sbManagerEmail').value.trim() } };
+  try { localStorage.setItem(SB_KEY, JSON.stringify(cfg)); } catch { return msg('تعذّر الحفظ في هذا المتصفح'); }
+  msg('✅ تم الربط — جارٍ إعادة التحميل...');
+  location.reload();
+});
+$('#sbShareBtn').addEventListener('click', async () => {
+  const c = supabaseConfig();
+  if (!c) return;
+  const link = `${location.origin}${location.pathname}#sb=${encodeSetup(c)}`;
+  if (navigator.share) { try { await navigator.share({ title: 'ربط تطبيق المقهى', url: link }); return; } catch {} }
+  try { await navigator.clipboard.writeText(link); toast('تم نسخ الرابط — افتحه مرة واحدة على كل هاتف'); }
+  catch { prompt('انسخ هذا الرابط وافتحه مرة واحدة على كل هاتف:', link); }
+});
+$('#sbDisconnectBtn').addEventListener('click', () => {
+  if (!confirm('قطع ربط هذا الجهاز بـ Supabase؟ (البيانات تبقى محفوظة في Supabase)')) return;
+  try { localStorage.removeItem(SB_KEY); localStorage.removeItem('cafe-meknas-auth'); } catch {}
+  location.reload();
 });
 
 (async function init() {

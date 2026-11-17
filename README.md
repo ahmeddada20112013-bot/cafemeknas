@@ -36,7 +36,14 @@ Supabase يحفظ البيانات (قاعدة بيانات + حسابات + ت�
 3. **مهم للأمان:** في **Authentication ← Sign In / Providers ← Email**، أوقف **Allow new users to sign up** حتى لا ينشئ أحد حساباً جديداً.
    (وحتى لو أنشأ أحدهم حساباً، لن يرى أي بيانات لأنه غير موجود في جدول `staff`.)
 
-### 4) ربط التطبيق
+### 4) ربط التطبيق (طريقتان)
+
+**أ) من داخل التطبيق (الأسهل، بدون تعديل ملفات):**
+1. افتح رابط التطبيق ← في صفحة الدخول اضغط **«☁️ ربط بـ Supabase»**.
+2. الصق **Project URL** ومفتاح **anon public** (أو **Publishable key**) من **Project Settings ← API Keys** ← **اختبار وحفظ**.
+3. لربط الهواتف: بعد الربط اضغط **«📲 رابط ربط الهواتف»** وأرسل الرابط (واتساب مثلاً)، وافتحه **مرة واحدة** على كل هاتف.
+
+**ب) أو عبر الملف `config.js`** (يُطبَّق على كل الأجهزة تلقائياً بعد إعادة النشر):
 من **Project Settings ← API** انسخ **Project URL** ومفتاح **anon public** وضعهما في [`config.js`](config.js):
 ```js
 window.CAFE_CONFIG = {
@@ -76,7 +83,7 @@ npx supabase functions deploy set-password --project-ref xxxxxxxx
 
 | الرسالة | الحل |
 |---|---|
-| «Supabase غير مفعّل لأن config.js فارغ» | املأ `config.js` (الخطوة 4) ثم أعد نشر الصفحة |
+| «غير مربوط بـ Supabase» | اضغط «☁️ ربط بـ Supabase» في صفحة الدخول (الخطوة 4) |
 | «جداول قاعدة البيانات غير موجودة» | شغّل `supabase/schema.sql` في SQL Editor |
 | «صلاحيات ناقصة» | أعد تشغيل آخر نسخة من `supabase/schema.sql` (لا يحذف بياناتك) |
 | «البريد أو كلمة المرور غير صحيحة» | تأكّد أن البريد في `config.js` يطابق المستخدم في Authentication ← Users |

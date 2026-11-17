@@ -281,3 +281,14 @@ body.locked .chat-fab, body.locked .chat-panel { display: none !important; }
 .diag[hidden] { display: none; }
 .diag .bad { color: var(--danger); }
 .login-error { line-height: 1.6; font-size: .9rem; }
+
+#loginScreen { flex-direction: column; gap: 16px; }
+.login-tools { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.login-tools .btn[hidden] { display: none; }
+.setup-card[hidden] { display: none; }
+.setup-card h2 { margin: 0; font-size: 1.15rem; }
+.setup-card label { display: flex; flex-direction: column; gap: 4px; text-align: start; font-size: .9rem; color: var(--muted); }
+.setup-card textarea { resize: vertical; font-family: monospace; font-size: .8rem; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px; color: inherit; word-break: break-all; }
+.setup-card .form-actions { justify-content: center; }
+body.setup-open #loginForm { display: none; }
