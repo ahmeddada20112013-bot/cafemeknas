@@ -26,6 +26,10 @@ Supabase يحفظ البيانات (قاعدة بيانات + حسابات + ت�
 **SQL Editor ← New query** ← الصق محتوى الملف [`supabase/schema.sql`](supabase/schema.sql) ← **Run**.
 
 ### 3) إنشاء الحسابين
+**الطريقة السريعة:** في **SQL Editor** الصق محتوى [`supabase/create-accounts.sql`](supabase/create-accounts.sql) ← **Run**.
+ينشئ الحسابين مؤكَّدين بكلمة المرور `000000` ويربطهما بالأدوار (يغني عن الخطوتين 1 و2 أدناه). غيّر كلمتي المرور بعد أول دخول.
+
+**أو يدوياً:**
 1. **Authentication ← Users ← Add user ← Create new user**، مرتين:
    - `owner@cafemeknas.ma` (صاحب المقهى)
    - `manager@cafemeknas.ma` (المدير)
