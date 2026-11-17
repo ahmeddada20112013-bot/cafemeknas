@@ -11,4 +11,4 @@ insert into public.staff (user_id, role, title)
 select id, 'manager', 'مدير المقهى' from auth.users where email = 'manager@cafemeknas.ma'
 on conflict (role) do update set user_id = excluded.user_id;
 
-select role, title, u.email from public.staff s join auth.users u on u.id = s.user_id;
+select s.role, s.title, u.email from public.staff s join auth.users u on u.id = s.user_id;
