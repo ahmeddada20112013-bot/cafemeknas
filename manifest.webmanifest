@@ -1,0 +1,11 @@
+{
+  "name": "مقهى مكناس — الطلبات والألعاب",
+  "short_name": "مقهى مكناس",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "dir": "rtl",
+  "lang": "ar",
+  "background_color": "#111827",
+  "theme_color": "#1f2937",
+  "icons": []
+}
